@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Bughay/go-backend-layout/internal/model"
+	"github.com/Bughay/egolifter/internal/model"
 
 	"github.com/golang-jwt/jwt/v5"
 )

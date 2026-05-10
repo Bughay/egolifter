@@ -6,7 +6,7 @@ sql:
     schema: "sql/migrations"       # Path to schema files
     gen:
       go:
-        package: "db"             # Go package name
+        package: "sqlc"             # Go package name
         out: "sql/sqlc"            # Output directory
         sql_package: "pgx/v5"     # Driver: pgx/v5, database/sql
         emit_json_tags: true      # Add json tags to structs

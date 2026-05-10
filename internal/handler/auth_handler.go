@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Bughay/go-backend-layout/internal/lib"
-	"github.com/Bughay/go-backend-layout/internal/model"
-	"github.com/Bughay/go-backend-layout/internal/service"
+	"github.com/Bughay/egolifter/internal/lib"
+	"github.com/Bughay/egolifter/internal/model"
+	"github.com/Bughay/egolifter/internal/service"
 )
 
 // AuthHandler handles auth-related HTTP requests.

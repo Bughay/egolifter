@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Bughay/go-backend-layout/internal/auth"
-	"github.com/Bughay/go-backend-layout/internal/model"
-	"github.com/Bughay/go-backend-layout/internal/repository"
+	"github.com/Bughay/egolifter/internal/auth"
+	"github.com/Bughay/egolifter/internal/model"
+	"github.com/Bughay/egolifter/internal/repository"
 	"golang.org/x/crypto/bcrypt"
 )
 

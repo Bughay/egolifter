@@ -3,7 +3,7 @@
 //   sqlc v1.31.1
 // source: food_queries.sql
 
-package db
+package sqlc
 
 import (
 	"context"

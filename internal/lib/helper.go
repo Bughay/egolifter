@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/Bughay/go-backend-layout/internal/model"
+	"github.com/Bughay/egolifter/internal/model"
 )
 
 func WriteJSON(w http.ResponseWriter, status int, v any) {
