@@ -1,0 +1,21 @@
+# sqlc.yaml - Detailed configuration with explanations
+version: "2"
+sql:
+  - engine: "postgresql"          # Database engine: postgresql, mysql, sqlite
+    queries: "sql/queries"         # Path to query files
+    schema: "sql/migrations"       # Path to schema files
+    gen:
+      go:
+        package: "db"             # Go package name
+        out: "sql/sqlc"            # Output directory
+        sql_package: "pgx/v5"     # Driver: pgx/v5, database/sql
+        emit_json_tags: true      # Add json tags to structs
+        emit_interface: true      # Generate Querier interface
+        emit_empty_slices: true   # Return [] instead of nil for empty results
+        emit_exact_table_names: false  # Use singular table names for structs
+        emit_prepared_queries: false   # Use prepared statements
+        overrides:                # Custom type mappings
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          - db_type: "timestamptz"
+            go_type: "time.Time"
