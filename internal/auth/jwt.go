@@ -39,7 +39,7 @@ func (m *Manager) Generate(userID int64, email, role string) (string, error) {
 			Role:   role,
 		},
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(m.accessExpiry) * time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(m.accessExpiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "go-api",
 		},
@@ -53,10 +53,8 @@ func (m *Manager) Generate(userID int64, email, role string) (string, error) {
 	return signedToken, nil
 }
 
-// Validate parses and validates a JWT string, returning the embedded claims.
-func (m *Manager) Validate(tokenStr string) (*Claims, error) {
+func (m *Manager) validate(tokenStr, expectedIssuer string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &jwtCustomClaims{}, func(token *jwt.Token) (any, error) {
-		// IMPORTANT: Always verify the signing method to prevent algorithm substitution attacks
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("auth: unexpected signing method: %v", token.Header["alg"])
 		}
@@ -73,8 +71,21 @@ func (m *Manager) Validate(tokenStr string) (*Claims, error) {
 	if !ok || !token.Valid {
 		return nil, fmt.Errorf("auth: token claims are invalid")
 	}
+	if claims.RegisteredClaims.Issuer != expectedIssuer {
+		return nil, fmt.Errorf("auth: invalid token type")
+	}
 
 	return &claims.Claims, nil
+}
+
+// ValidateAccess parses and validates an access token.
+func (m *Manager) ValidateAccess(tokenStr string) (*Claims, error) {
+	return m.validate(tokenStr, "go-api")
+}
+
+// ValidateRefresh parses and validates a refresh token.
+func (m *Manager) ValidateRefresh(tokenStr string) (*Claims, error) {
+	return m.validate(tokenStr, "go-api-refresh")
 }
 
 func (m *Manager) GenerateRefreshToken(userID int64, email, role string) (string, error) {

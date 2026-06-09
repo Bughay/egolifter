@@ -29,7 +29,7 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		claims, err := m.Validate(parts[1])
+		claims, err := m.ValidateAccess(parts[1])
 		if err != nil {
 			lib.WriteError(w, http.StatusUnauthorized, err.Error())
 			return
@@ -50,7 +50,7 @@ func (m *Manager) CookieMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		claims, err := m.Validate(cookie.Value)
+		claims, err := m.ValidateRefresh(cookie.Value)
 		if err != nil {
 			// Clear bad cookie
 			http.SetCookie(w, &http.Cookie{
