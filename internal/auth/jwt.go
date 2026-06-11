@@ -31,7 +31,7 @@ func NewManager(secret string, accessExpiryHours int, refreshExpiryHours int) *M
 }
 
 // Generate creates a signed JWT string for a given user.
-func (m *Manager) Generate(userID int64, email, role string) (string, error) {
+func (m *Manager) Generate(userID string, email, role string) (string, error) {
 	claims := jwtCustomClaims{
 		Claims: Claims{
 			UserID: userID,
@@ -88,7 +88,7 @@ func (m *Manager) ValidateRefresh(tokenStr string) (*Claims, error) {
 	return m.validate(tokenStr, "go-api-refresh")
 }
 
-func (m *Manager) GenerateRefreshToken(userID int64, email, role string) (string, error) {
+func (m *Manager) GenerateRefreshToken(userID string, email, role string) (string, error) {
 	claims := jwtCustomClaims{
 		Claims: Claims{
 			UserID: userID,

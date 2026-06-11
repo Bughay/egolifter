@@ -13,7 +13,7 @@ import (
 type UserRepository interface {
 	Create(ctx context.Context, email, hashedPassword string) (*User, error)
 	FindByEmail(ctx context.Context, email string) (*User, error)
-	FindByID(ctx context.Context, id int64) (*User, error)
+	FindByID(ctx context.Context, id string) (*User, error)
 }
 
 type pgUserRepository struct {
@@ -57,7 +57,7 @@ func (r *pgUserRepository) FindByEmail(ctx context.Context, email string) (*User
 	return &user, nil
 }
 
-func (r *pgUserRepository) FindByID(ctx context.Context, id int64) (*User, error) {
+func (r *pgUserRepository) FindByID(ctx context.Context, id string) (*User, error) {
 	query := `SELECT id, email, role, created_at FROM users WHERE id = $1`
 
 	var user User

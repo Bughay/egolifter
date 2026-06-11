@@ -1,0 +1,135 @@
+package nutrition
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/Bughay/egolifter/internal/db"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// MealRepository defines the contract for meal data access.
+type MealRepository interface {
+	Create(ctx context.Context, userID string, req *CreateMealRequest) (*Meal, error)
+	FindByID(ctx context.Context, userID, id string) (*Meal, error)
+	List(ctx context.Context, userID string) ([]Meal, error)
+}
+
+type pgMealRepository struct {
+	pool    *pgxpool.Pool
+	queries *db.Queries
+}
+
+// NewMealRepository creates a new PostgreSQL-backed MealRepository wrapping the sqlc-generated queries.
+func NewMealRepository(pool *pgxpool.Pool) MealRepository {
+	return &pgMealRepository{pool: pool, queries: db.New(pool)}
+}
+
+// Create inserts the meal and its consumed foods in a single transaction.
+func (r *pgMealRepository) Create(ctx context.Context, userID string, req *CreateMealRequest) (*Meal, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("mealRepo.Create: begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	qtx := r.queries.WithTx(tx)
+
+	row, err := qtx.CreateMeal(ctx, db.CreateMealParams{
+		UserID: userID,
+		Name:   req.Name,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mealRepo.Create: %w", err)
+	}
+
+	for _, f := range req.Foods {
+		if _, err := qtx.CreateFoodConsumed(ctx, db.CreateFoodConsumedParams{
+			UserID:  userID,
+			MealID:  row.ID,
+			FoodID:  f.FoodID,
+			WeightG: f.WeightG,
+		}); err != nil {
+			// The INSERT ... SELECT matches no row when the food does not exist.
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("validation: food %s not found", f.FoodID)
+			}
+			return nil, fmt.Errorf("mealRepo.Create: insert food consumed (food %s): %w", f.FoodID, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("mealRepo.Create: commit: %w", err)
+	}
+
+	return r.FindByID(ctx, userID, row.ID)
+}
+
+func (r *pgMealRepository) FindByID(ctx context.Context, userID, id string) (*Meal, error) {
+	row, err := r.queries.GetMealByID(ctx, db.GetMealByIDParams{ID: id, UserID: userID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil // Not found is not an error at this layer
+		}
+		return nil, fmt.Errorf("mealRepo.FindByID: %w", err)
+	}
+
+	foodRows, err := r.queries.ListFoodConsumedByMeal(ctx, db.ListFoodConsumedByMealParams{
+		MealID: row.ID,
+		UserID: userID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mealRepo.FindByID: foods: %w", err)
+	}
+
+	meal := &Meal{
+		ID:                 row.ID,
+		UserID:             row.UserID,
+		Name:               row.Name,
+		Foods:              make([]ConsumedFood, 0, len(foodRows)),
+		TotalCalories:      row.TotalCalories,
+		TotalProtein:       row.TotalProtein,
+		TotalCarbohydrates: row.TotalCarbohydrates,
+		TotalFat:           row.TotalFat,
+		CreatedAt:          row.CreatedAt,
+		UpdatedAt:          row.UpdatedAt,
+	}
+	for _, fr := range foodRows {
+		meal.Foods = append(meal.Foods, ConsumedFood{
+			ID:                 fr.ID,
+			FoodID:             fr.FoodID,
+			FoodName:           fr.FoodName,
+			WeightG:            fr.WeightG,
+			TotalCalories:      fr.TotalCalories,
+			TotalProtein:       fr.TotalProtein,
+			TotalCarbohydrates: fr.TotalCarbohydrates,
+			TotalFat:           fr.TotalFat,
+		})
+	}
+	return meal, nil
+}
+
+func (r *pgMealRepository) List(ctx context.Context, userID string) ([]Meal, error) {
+	rows, err := r.queries.ListMeals(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("mealRepo.List: %w", err)
+	}
+	meals := make([]Meal, 0, len(rows))
+	for _, row := range rows {
+		meals = append(meals, Meal{
+			ID:                 row.ID,
+			UserID:             row.UserID,
+			Name:               row.Name,
+			Foods:              []ConsumedFood{},
+			TotalCalories:      row.TotalCalories,
+			TotalProtein:       row.TotalProtein,
+			TotalCarbohydrates: row.TotalCarbohydrates,
+			TotalFat:           row.TotalFat,
+			CreatedAt:          row.CreatedAt,
+			UpdatedAt:          row.UpdatedAt,
+		})
+	}
+	return meals, nil
+}

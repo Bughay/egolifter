@@ -4,7 +4,7 @@ import "time"
 
 // User represents an authenticated application user.
 type User struct {
-	ID        int64     `json:"id"`
+	ID        string    `json:"id"`
 	Email     string    `json:"email"`
 	Password  string    `json:"-"` // The "-" tag ensures the hash is NEVER serialized to JSON
 	Role      string    `json:"role"`
@@ -44,7 +44,7 @@ type RefreshResponse struct {
 
 // Claims represents the data embedded inside our JWT.
 type Claims struct {
-	UserID int64  `json:"user_id"`
+	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 }
