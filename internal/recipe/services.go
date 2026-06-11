@@ -55,18 +55,3 @@ func (s *recipeService) DeleteRecipe(ctx context.Context, userID, id string) err
 	}
 	return s.recipeRepo.Delete(ctx, userID, id)
 }
-
-func validateRecipeInput(name string, ingredients []IngredientInput) error {
-	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("validation: recipe name is required")
-	}
-	for i, ing := range ingredients {
-		if strings.TrimSpace(ing.FoodID) == "" {
-			return fmt.Errorf("validation: ingredient %d: food_id is required", i)
-		}
-		if ing.WeightG <= 0 {
-			return fmt.Errorf("validation: ingredient %d: weight_g must be greater than zero", i)
-		}
-	}
-	return nil
-}

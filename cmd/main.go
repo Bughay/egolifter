@@ -10,6 +10,7 @@ import (
 	"github.com/Bughay/egolifter/internal/lib"
 	"github.com/Bughay/egolifter/internal/nutrition"
 	"github.com/Bughay/egolifter/internal/recipe"
+	"github.com/Bughay/egolifter/internal/training"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -57,6 +58,12 @@ func main() {
 	recipeSvc := recipe.NewRecipeService(recipeRepo)
 	recipeHandler := recipe.NewRecipeHandler(recipeSvc, logger)
 	recipeHandler.RegisterRoutes(mux, jwtManager.Middleware)
+
+	// Training module: handler -> service -> repository (JWT-protected)
+	trainingRepo := training.NewTrainingRepository(pool)
+	trainingSvc := training.NewTrainingService(trainingRepo)
+	trainingHandler := training.NewTrainingHandler(trainingSvc, logger)
+	trainingHandler.RegisterRoutes(mux, jwtManager.Middleware)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Server.Port,

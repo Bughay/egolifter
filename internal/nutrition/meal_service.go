@@ -2,8 +2,6 @@ package nutrition
 
 import (
 	"context"
-	"fmt"
-	"strings"
 )
 
 // MealService defines the contract for meal business logic.
@@ -35,22 +33,4 @@ func (s *mealService) GetMeal(ctx context.Context, userID, id string) (*Meal, er
 
 func (s *mealService) ListMeals(ctx context.Context, userID string) ([]Meal, error) {
 	return s.mealRepo.List(ctx, userID)
-}
-
-func validateMealInput(name string, foods []MealFoodInput) error {
-	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("validation: meal name is required")
-	}
-	if len(foods) == 0 {
-		return fmt.Errorf("validation: a meal must contain at least one food")
-	}
-	for i, f := range foods {
-		if strings.TrimSpace(f.FoodID) == "" {
-			return fmt.Errorf("validation: food %d: food_id is required", i)
-		}
-		if f.WeightG <= 0 {
-			return fmt.Errorf("validation: food %d: weight_g must be greater than zero", i)
-		}
-	}
-	return nil
 }

@@ -39,6 +39,11 @@ func (h *NutritionHandler) CreateFood(w http.ResponseWriter, r *http.Request) {
 
 	food, err := h.nutritionSvc.CreateFood(r.Context(), &req)
 	if err != nil {
+		if isValidationErr(err) {
+			log.WarnContext(r.Context(), "food validation failed", "error", err)
+			lib.WriteError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		log.ErrorContext(r.Context(), "failed to create food", "error", err)
 		lib.WriteError(w, http.StatusInternalServerError, "failed to create food")
 		return
@@ -67,6 +72,11 @@ func (h *NutritionHandler) ViewFood(w http.ResponseWriter, r *http.Request) {
 
 	food, err := h.nutritionSvc.GetFood(r.Context(), id)
 	if err != nil {
+		if isValidationErr(err) {
+			log.WarnContext(r.Context(), "food validation failed", "error", err)
+			lib.WriteError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		log.ErrorContext(r.Context(), "failed to get food", "food_id", id, "error", err)
 		lib.WriteError(w, http.StatusInternalServerError, "failed to get food")
 		return
@@ -93,6 +103,11 @@ func (h *NutritionHandler) UpdateFood(w http.ResponseWriter, r *http.Request) {
 
 	food, err := h.nutritionSvc.UpdateFood(r.Context(), &req)
 	if err != nil {
+		if isValidationErr(err) {
+			log.WarnContext(r.Context(), "food validation failed", "error", err)
+			lib.WriteError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		log.ErrorContext(r.Context(), "failed to update food", "error", err)
 		lib.WriteError(w, http.StatusInternalServerError, "failed to update food")
 		return
@@ -113,6 +128,11 @@ func (h *NutritionHandler) DeleteFood(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 
 	if err := h.nutritionSvc.DeleteFood(r.Context(), id); err != nil {
+		if isValidationErr(err) {
+			log.WarnContext(r.Context(), "food validation failed", "error", err)
+			lib.WriteError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
 		log.ErrorContext(r.Context(), "failed to delete food", "food_id", id, "error", err)
 		lib.WriteError(w, http.StatusInternalServerError, "failed to delete food")
 		return

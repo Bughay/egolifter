@@ -100,3 +100,21 @@ type Workout struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+type WorkoutRoutine struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type WorkoutRoutineEntry struct {
+	ID               string    `json:"id"`
+	WorkoutRoutineID string    `json:"workout_routine_id"`
+	Name             string    `json:"name"`
+	WeightKg         float64   `json:"weight_kg"`
+	Reps             int32     `json:"reps"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
