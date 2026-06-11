@@ -57,10 +57,6 @@ func (s *authService) Register(ctx context.Context, req *RegisterRequest) (*Regi
 		return nil, fmt.Errorf("register: failed to create user: %w", err)
 	}
 
-	if err != nil {
-		return nil, err
-	}
-
 	return &RegistrationResponse{
 		Message: "You have succesfully registered",
 		Success: true,

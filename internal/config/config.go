@@ -18,6 +18,8 @@ type ServerConfig struct {
 	Port            string
 	ReadTimeoutSec  int
 	WriteTimeoutSec int
+	LogFormat       string // "json" or "text" (default)
+	LogLevel        string // "debug", "info" (default), "warn", "error"
 }
 
 type DatabaseConfig struct {
@@ -71,11 +73,22 @@ func LoadConfig() (*Config, error) {
 	deepseekApiKey := os.Getenv("DEEPSEEKAPIKEY")
 	grokApiKey := os.Getenv("grokApiKey")
 
+	logFormat := os.Getenv("LOG_FORMAT")
+	if logFormat == "" {
+		logFormat = "text"
+	}
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "info"
+	}
+
 	return &Config{
 		Server: ServerConfig{
 			Port:            port,
 			ReadTimeoutSec:  readTimeout,
 			WriteTimeoutSec: writeTimeout,
+			LogFormat:       logFormat,
+			LogLevel:        logLevel,
 		},
 		Database: DatabaseConfig{DSN: dbDSN},
 		JWT:      JWTConfig{Secret: secret, AccessExpiryHours: jwtExpiry, RefreshExpiryDays: refreshTokenExpiry},
