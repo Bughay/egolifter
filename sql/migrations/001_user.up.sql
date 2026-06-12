@@ -22,6 +22,7 @@ Create table IF NOT EXISTS  "user_profiles" (
 
 Create table IF NOT EXISTS  "food" (
     id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references "users"(id) on delete cascade,
     name text not null,
     calories_100 float not null,
     protein_100 float not null, 
@@ -116,3 +117,5 @@ ALTER TABLE "meal" ADD CONSTRAINT uq_meal_id_user UNIQUE (id, user_id);
 ALTER TABLE "food_consumed"
   ADD CONSTRAINT fk_food_consumed_meal_user
   FOREIGN KEY (meal_id, user_id) REFERENCES "meal"(id, user_id);
+
+CREATE INDEX idx_food_user_id ON "food"(user_id);

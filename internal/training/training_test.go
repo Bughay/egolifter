@@ -101,7 +101,7 @@ func TestSaveRoutineValidation(t *testing.T) {
 		{
 			name: "boundary values are valid",
 			req: &CreateRoutineRequest{Name: "limits", Entries: []EntryInput{
-				{Name: "squat", WeightKg: 1000, Reps: 500},
+				{Name: "squat", WeightKg: 1000, Reps: 100},
 				{Name: "plank", WeightKg: 0, Reps: 1},
 			}},
 		},
@@ -151,14 +151,14 @@ func TestSaveRoutineValidation(t *testing.T) {
 			req: &CreateRoutineRequest{Name: "push day", Entries: []EntryInput{
 				{Name: "bench press", WeightKg: 50, Reps: 0},
 			}},
-			wantErr: "reps must be between 1 and 500",
+			wantErr: "reps must be between 1 and 100",
 		},
 		{
 			name: "absurd reps",
 			req: &CreateRoutineRequest{Name: "push day", Entries: []EntryInput{
-				{Name: "bench press", WeightKg: 50, Reps: 501},
+				{Name: "bench press", WeightKg: 50, Reps: 101},
 			}},
-			wantErr: "reps must be between 1 and 500",
+			wantErr: "reps must be between 1 and 100",
 		},
 	}
 

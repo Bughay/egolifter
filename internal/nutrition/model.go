@@ -5,6 +5,7 @@ import "time"
 // Food represents a food item with macros stored per 100g.
 type Food struct {
 	ID               string    `json:"id"`
+	UserID           string    `json:"user_id"`
 	Name             string    `json:"name"`
 	Calories100      float64   `json:"calories_100"`
 	Protein100       float64   `json:"protein_100"`
@@ -59,10 +60,16 @@ type UpdateFoodRequest struct {
 	Fat100           float64 `json:"fat_100"`
 }
 
-// MealFoodInput is one food entry in a meal creation request.
+// MealFoodInput is one food entry in a meal creation request. The macros are the
+// totals actually consumed for WeightG (not per-100g); the server converts them to
+// per-100g to match or create the corresponding food in the user's catalog.
 type MealFoodInput struct {
-	FoodID  string  `json:"food_id"`
-	WeightG float64 `json:"weight_g"`
+	Name          string  `json:"name"`
+	WeightG       float64 `json:"weight_g"`
+	Calories      float64 `json:"calories"`
+	Protein       float64 `json:"protein"`
+	Carbohydrates float64 `json:"carbohydrates"`
+	Fat           float64 `json:"fat"`
 }
 
 type CreateMealRequest struct {

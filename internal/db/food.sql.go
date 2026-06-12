@@ -10,12 +10,13 @@ import (
 )
 
 const createFood = `-- name: CreateFood :one
-INSERT INTO food (name, calories_100, protein_100, carbohydrates_100, fat_100)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, name, calories_100, protein_100, carbohydrates_100, fat_100, created_at, updated_at
+INSERT INTO food (user_id, name, calories_100, protein_100, carbohydrates_100, fat_100)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, user_id, name, calories_100, protein_100, carbohydrates_100, fat_100, created_at, updated_at
 `
 
 type CreateFoodParams struct {
+	UserID           string  `json:"user_id"`
 	Name             string  `json:"name"`
 	Calories100      float64 `json:"calories_100"`
 	Protein100       float64 `json:"protein_100"`
@@ -25,6 +26,7 @@ type CreateFoodParams struct {
 
 func (q *Queries) CreateFood(ctx context.Context, arg CreateFoodParams) (Food, error) {
 	row := q.db.QueryRow(ctx, createFood,
+		arg.UserID,
 		arg.Name,
 		arg.Calories100,
 		arg.Protein100,
@@ -34,6 +36,7 @@ func (q *Queries) CreateFood(ctx context.Context, arg CreateFoodParams) (Food, e
 	var i Food
 	err := row.Scan(
 		&i.ID,
+		&i.UserID,
 		&i.Name,
 		&i.Calories100,
 		&i.Protein100,
@@ -47,24 +50,35 @@ func (q *Queries) CreateFood(ctx context.Context, arg CreateFoodParams) (Food, e
 
 const deleteFood = `-- name: DeleteFood :exec
 DELETE FROM food
-WHERE id = $1
+WHERE id = $1 AND user_id = $2
 `
 
-func (q *Queries) DeleteFood(ctx context.Context, id string) error {
-	_, err := q.db.Exec(ctx, deleteFood, id)
+type DeleteFoodParams struct {
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) DeleteFood(ctx context.Context, arg DeleteFoodParams) error {
+	_, err := q.db.Exec(ctx, deleteFood, arg.ID, arg.UserID)
 	return err
 }
 
 const getFoodByID = `-- name: GetFoodByID :one
-SELECT id, name, calories_100, protein_100, carbohydrates_100, fat_100, created_at, updated_at FROM food
-WHERE id = $1
+SELECT id, user_id, name, calories_100, protein_100, carbohydrates_100, fat_100, created_at, updated_at FROM food
+WHERE id = $1 AND user_id = $2
 `
 
-func (q *Queries) GetFoodByID(ctx context.Context, id string) (Food, error) {
-	row := q.db.QueryRow(ctx, getFoodByID, id)
+type GetFoodByIDParams struct {
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) GetFoodByID(ctx context.Context, arg GetFoodByIDParams) (Food, error) {
+	row := q.db.QueryRow(ctx, getFoodByID, arg.ID, arg.UserID)
 	var i Food
 	err := row.Scan(
 		&i.ID,
+		&i.UserID,
 		&i.Name,
 		&i.Calories100,
 		&i.Protein100,
@@ -77,12 +91,13 @@ func (q *Queries) GetFoodByID(ctx context.Context, id string) (Food, error) {
 }
 
 const listFoods = `-- name: ListFoods :many
-SELECT id, name, calories_100, protein_100, carbohydrates_100, fat_100, created_at, updated_at FROM food
+SELECT id, user_id, name, calories_100, protein_100, carbohydrates_100, fat_100, created_at, updated_at FROM food
+WHERE user_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListFoods(ctx context.Context) ([]Food, error) {
-	rows, err := q.db.Query(ctx, listFoods)
+func (q *Queries) ListFoods(ctx context.Context, userID string) ([]Food, error) {
+	rows, err := q.db.Query(ctx, listFoods, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +107,7 @@ func (q *Queries) ListFoods(ctx context.Context) ([]Food, error) {
 		var i Food
 		if err := rows.Scan(
 			&i.ID,
+			&i.UserID,
 			&i.Name,
 			&i.Calories100,
 			&i.Protein100,
@@ -112,18 +128,19 @@ func (q *Queries) ListFoods(ctx context.Context) ([]Food, error) {
 
 const updateFood = `-- name: UpdateFood :one
 UPDATE food
-SET name              = $2,
-    calories_100      = $3,
-    protein_100       = $4,
-    carbohydrates_100 = $5,
-    fat_100           = $6,
+SET name              = $3,
+    calories_100      = $4,
+    protein_100       = $5,
+    carbohydrates_100 = $6,
+    fat_100           = $7,
     updated_at        = now()
-WHERE id = $1
-RETURNING id, name, calories_100, protein_100, carbohydrates_100, fat_100, created_at, updated_at
+WHERE id = $1 AND user_id = $2
+RETURNING id, user_id, name, calories_100, protein_100, carbohydrates_100, fat_100, created_at, updated_at
 `
 
 type UpdateFoodParams struct {
 	ID               string  `json:"id"`
+	UserID           string  `json:"user_id"`
 	Name             string  `json:"name"`
 	Calories100      float64 `json:"calories_100"`
 	Protein100       float64 `json:"protein_100"`
@@ -134,6 +151,7 @@ type UpdateFoodParams struct {
 func (q *Queries) UpdateFood(ctx context.Context, arg UpdateFoodParams) (Food, error) {
 	row := q.db.QueryRow(ctx, updateFood,
 		arg.ID,
+		arg.UserID,
 		arg.Name,
 		arg.Calories100,
 		arg.Protein100,
@@ -143,6 +161,7 @@ func (q *Queries) UpdateFood(ctx context.Context, arg UpdateFoodParams) (Food, e
 	var i Food
 	err := row.Scan(
 		&i.ID,
+		&i.UserID,
 		&i.Name,
 		&i.Calories100,
 		&i.Protein100,

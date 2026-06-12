@@ -22,6 +22,7 @@ type Exercise struct {
 
 type Food struct {
 	ID               string    `json:"id"`
+	UserID           string    `json:"user_id"`
 	Name             string    `json:"name"`
 	Calories100      float64   `json:"calories_100"`
 	Protein100       float64   `json:"protein_100"`

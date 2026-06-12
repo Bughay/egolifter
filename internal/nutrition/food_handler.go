@@ -19,16 +19,25 @@ func NewNutritionHandler(nutritionSvc NutritionService, logger *slog.Logger) *Nu
 	return &NutritionHandler{nutritionSvc: nutritionSvc, logger: logger}
 }
 
-// RegisterRoutes attaches the food CRUD endpoints to the given mux.
-func (h *NutritionHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /food/create", h.CreateFood)
-	mux.HandleFunc("GET /food/view", h.ViewFood)
-	mux.HandleFunc("PUT /food/update", h.UpdateFood)
-	mux.HandleFunc("DELETE /food/delete", h.DeleteFood)
+// RegisterRoutes attaches the food CRUD endpoints to the given mux,
+// wrapping every route with the provided middleware (JWT auth).
+func (h *NutritionHandler) RegisterRoutes(mux *http.ServeMux, mw func(http.Handler) http.Handler) {
+	mux.Handle("POST /food/create", mw(http.HandlerFunc(h.CreateFood)))
+	mux.Handle("GET /food/view", mw(http.HandlerFunc(h.ViewFood)))
+	mux.Handle("PUT /food/update", mw(http.HandlerFunc(h.UpdateFood)))
+	mux.Handle("DELETE /food/delete", mw(http.HandlerFunc(h.DeleteFood)))
 }
 
 func (h *NutritionHandler) CreateFood(w http.ResponseWriter, r *http.Request) {
 	log := h.logger.With("method", r.Method, "path", r.URL.Path)
+
+	uid, ok := userID(r)
+	if !ok {
+		log.WarnContext(r.Context(), "unauthenticated food create attempt")
+		lib.WriteError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	log = log.With("user_id", uid)
 
 	var req CreateFoodRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -37,7 +46,7 @@ func (h *NutritionHandler) CreateFood(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	food, err := h.nutritionSvc.CreateFood(r.Context(), &req)
+	food, err := h.nutritionSvc.CreateFood(r.Context(), uid, &req)
 	if err != nil {
 		if isValidationErr(err) {
 			log.WarnContext(r.Context(), "food validation failed", "error", err)
@@ -57,9 +66,17 @@ func (h *NutritionHandler) CreateFood(w http.ResponseWriter, r *http.Request) {
 func (h *NutritionHandler) ViewFood(w http.ResponseWriter, r *http.Request) {
 	log := h.logger.With("method", r.Method, "path", r.URL.Path)
 
+	uid, ok := userID(r)
+	if !ok {
+		log.WarnContext(r.Context(), "unauthenticated food view attempt")
+		lib.WriteError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	log = log.With("user_id", uid)
+
 	id := r.URL.Query().Get("id")
 	if id == "" {
-		foods, err := h.nutritionSvc.ListFoods(r.Context())
+		foods, err := h.nutritionSvc.ListFoods(r.Context(), uid)
 		if err != nil {
 			log.ErrorContext(r.Context(), "failed to list foods", "error", err)
 			lib.WriteError(w, http.StatusInternalServerError, "failed to list foods")
@@ -70,7 +87,7 @@ func (h *NutritionHandler) ViewFood(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	food, err := h.nutritionSvc.GetFood(r.Context(), id)
+	food, err := h.nutritionSvc.GetFood(r.Context(), uid, id)
 	if err != nil {
 		if isValidationErr(err) {
 			log.WarnContext(r.Context(), "food validation failed", "error", err)
@@ -94,6 +111,14 @@ func (h *NutritionHandler) ViewFood(w http.ResponseWriter, r *http.Request) {
 func (h *NutritionHandler) UpdateFood(w http.ResponseWriter, r *http.Request) {
 	log := h.logger.With("method", r.Method, "path", r.URL.Path)
 
+	uid, ok := userID(r)
+	if !ok {
+		log.WarnContext(r.Context(), "unauthenticated food update attempt")
+		lib.WriteError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	log = log.With("user_id", uid)
+
 	var req UpdateFoodRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.WarnContext(r.Context(), "invalid request body", "error", err)
@@ -101,7 +126,7 @@ func (h *NutritionHandler) UpdateFood(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	food, err := h.nutritionSvc.UpdateFood(r.Context(), &req)
+	food, err := h.nutritionSvc.UpdateFood(r.Context(), uid, &req)
 	if err != nil {
 		if isValidationErr(err) {
 			log.WarnContext(r.Context(), "food validation failed", "error", err)
@@ -125,9 +150,17 @@ func (h *NutritionHandler) UpdateFood(w http.ResponseWriter, r *http.Request) {
 func (h *NutritionHandler) DeleteFood(w http.ResponseWriter, r *http.Request) {
 	log := h.logger.With("method", r.Method, "path", r.URL.Path)
 
+	uid, ok := userID(r)
+	if !ok {
+		log.WarnContext(r.Context(), "unauthenticated food delete attempt")
+		lib.WriteError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	log = log.With("user_id", uid)
+
 	id := r.URL.Query().Get("id")
 
-	if err := h.nutritionSvc.DeleteFood(r.Context(), id); err != nil {
+	if err := h.nutritionSvc.DeleteFood(r.Context(), uid, id); err != nil {
 		if isValidationErr(err) {
 			log.WarnContext(r.Context(), "food validation failed", "error", err)
 			lib.WriteError(w, http.StatusUnprocessableEntity, err.Error())

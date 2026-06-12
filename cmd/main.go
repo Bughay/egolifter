@@ -41,11 +41,11 @@ func main() {
 	mux.HandleFunc("POST /auth/logout", authHandler.Logout)
 	mux.HandleFunc("POST /auth/refresh", authHandler.Refresh)
 
-	// Nutrition module: handler -> service -> repository
+	// Nutrition module: handler -> service -> repository (JWT-protected)
 	foodRepo := nutrition.NewFoodRepository(pool)
 	nutritionSvc := nutrition.NewNutritionService(foodRepo)
 	nutritionHandler := nutrition.NewNutritionHandler(nutritionSvc, logger)
-	nutritionHandler.RegisterRoutes(mux)
+	nutritionHandler.RegisterRoutes(mux, jwtManager.Middleware)
 
 	// Meal endpoints (nutrition module, JWT-protected)
 	mealRepo := nutrition.NewMealRepository(pool)
@@ -67,7 +67,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Server.Port,
-		Handler:      lib.RequestLogger(logger)(mux),
+		Handler:      lib.CORS(lib.RequestLogger(logger)(mux)),
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeoutSec) * time.Second,
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeoutSec) * time.Second,
 	}

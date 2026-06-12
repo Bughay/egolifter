@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds all application configuration, loaded from environment variables.
@@ -40,6 +42,8 @@ type AgentConfig struct {
 // Load reads environment variables and returns a populated Config struct.
 // It fails fast if required variables are missing.
 func LoadConfig() (*Config, error) {
+	_ = godotenv.Load()
+
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
 		return nil, fmt.Errorf("config: JWT_SECRET environment variable is required")
@@ -71,7 +75,6 @@ func LoadConfig() (*Config, error) {
 		port = "8080"
 	}
 	deepseekApiKey := os.Getenv("DEEPSEEKAPIKEY")
-	grokApiKey := os.Getenv("grokApiKey")
 
 	logFormat := os.Getenv("LOG_FORMAT")
 	if logFormat == "" {
@@ -92,6 +95,6 @@ func LoadConfig() (*Config, error) {
 		},
 		Database: DatabaseConfig{DSN: dbDSN},
 		JWT:      JWTConfig{Secret: secret, AccessExpiryHours: jwtExpiry, RefreshExpiryDays: refreshTokenExpiry},
-		Agent:    AgentConfig{DEEPSEEKAPIKEY: deepseekApiKey, GROKAPIKEY: grokApiKey},
+		Agent:    AgentConfig{DEEPSEEKAPIKEY: deepseekApiKey},
 	}, nil
 }

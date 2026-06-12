@@ -12,11 +12,11 @@ import (
 
 // FoodRepository defines the contract for Food data access.
 type FoodRepository interface {
-	Create(ctx context.Context, req *CreateFoodRequest) (*Food, error)
-	FindByID(ctx context.Context, id string) (*Food, error)
-	List(ctx context.Context) ([]Food, error)
-	Update(ctx context.Context, req *UpdateFoodRequest) (*Food, error)
-	Delete(ctx context.Context, id string) error
+	Create(ctx context.Context, userID string, req *CreateFoodRequest) (*Food, error)
+	FindByID(ctx context.Context, userID, id string) (*Food, error)
+	List(ctx context.Context, userID string) ([]Food, error)
+	Update(ctx context.Context, userID string, req *UpdateFoodRequest) (*Food, error)
+	Delete(ctx context.Context, userID, id string) error
 }
 
 type pgFoodRepository struct {
@@ -28,8 +28,9 @@ func NewFoodRepository(pool *pgxpool.Pool) FoodRepository {
 	return &pgFoodRepository{queries: db.New(pool)}
 }
 
-func (r *pgFoodRepository) Create(ctx context.Context, req *CreateFoodRequest) (*Food, error) {
+func (r *pgFoodRepository) Create(ctx context.Context, userID string, req *CreateFoodRequest) (*Food, error) {
 	row, err := r.queries.CreateFood(ctx, db.CreateFoodParams{
+		UserID:           userID,
 		Name:             req.Name,
 		Calories100:      req.Calories100,
 		Protein100:       req.Protein100,
@@ -42,8 +43,8 @@ func (r *pgFoodRepository) Create(ctx context.Context, req *CreateFoodRequest) (
 	return toFood(row), nil
 }
 
-func (r *pgFoodRepository) FindByID(ctx context.Context, id string) (*Food, error) {
-	row, err := r.queries.GetFoodByID(ctx, id)
+func (r *pgFoodRepository) FindByID(ctx context.Context, userID, id string) (*Food, error) {
+	row, err := r.queries.GetFoodByID(ctx, db.GetFoodByIDParams{ID: id, UserID: userID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil // Not found is not an error at this layer
@@ -53,8 +54,8 @@ func (r *pgFoodRepository) FindByID(ctx context.Context, id string) (*Food, erro
 	return toFood(row), nil
 }
 
-func (r *pgFoodRepository) List(ctx context.Context) ([]Food, error) {
-	rows, err := r.queries.ListFoods(ctx)
+func (r *pgFoodRepository) List(ctx context.Context, userID string) ([]Food, error) {
+	rows, err := r.queries.ListFoods(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("foodRepo.List: %w", err)
 	}
@@ -65,9 +66,10 @@ func (r *pgFoodRepository) List(ctx context.Context) ([]Food, error) {
 	return foods, nil
 }
 
-func (r *pgFoodRepository) Update(ctx context.Context, req *UpdateFoodRequest) (*Food, error) {
+func (r *pgFoodRepository) Update(ctx context.Context, userID string, req *UpdateFoodRequest) (*Food, error) {
 	row, err := r.queries.UpdateFood(ctx, db.UpdateFoodParams{
 		ID:               req.ID,
+		UserID:           userID,
 		Name:             req.Name,
 		Calories100:      req.Calories100,
 		Protein100:       req.Protein100,
@@ -83,8 +85,8 @@ func (r *pgFoodRepository) Update(ctx context.Context, req *UpdateFoodRequest) (
 	return toFood(row), nil
 }
 
-func (r *pgFoodRepository) Delete(ctx context.Context, id string) error {
-	if err := r.queries.DeleteFood(ctx, id); err != nil {
+func (r *pgFoodRepository) Delete(ctx context.Context, userID, id string) error {
+	if err := r.queries.DeleteFood(ctx, db.DeleteFoodParams{ID: id, UserID: userID}); err != nil {
 		return fmt.Errorf("foodRepo.Delete: %w", err)
 	}
 	return nil
@@ -94,6 +96,7 @@ func (r *pgFoodRepository) Delete(ctx context.Context, id string) error {
 func toFood(row db.Food) *Food {
 	return &Food{
 		ID:               row.ID,
+		UserID:           row.UserID,
 		Name:             row.Name,
 		Calories100:      row.Calories100,
 		Protein100:       row.Protein100,

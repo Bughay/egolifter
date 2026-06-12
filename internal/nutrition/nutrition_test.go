@@ -57,13 +57,14 @@ type stubFoodRepository struct {
 	deleteCalled bool
 }
 
-func (s *stubFoodRepository) Create(ctx context.Context, req *CreateFoodRequest) (*Food, error) {
+func (s *stubFoodRepository) Create(ctx context.Context, userID string, req *CreateFoodRequest) (*Food, error) {
 	s.createCalled = true
 	if s.err != nil {
 		return nil, s.err
 	}
 	return &Food{
 		ID:               "food-1",
+		UserID:           userID,
 		Name:             req.Name,
 		Calories100:      req.Calories100,
 		Protein100:       req.Protein100,
@@ -72,21 +73,21 @@ func (s *stubFoodRepository) Create(ctx context.Context, req *CreateFoodRequest)
 	}, nil
 }
 
-func (s *stubFoodRepository) FindByID(ctx context.Context, id string) (*Food, error) {
+func (s *stubFoodRepository) FindByID(ctx context.Context, userID, id string) (*Food, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	return s.food, nil
 }
 
-func (s *stubFoodRepository) List(ctx context.Context) ([]Food, error) {
+func (s *stubFoodRepository) List(ctx context.Context, userID string) ([]Food, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	return []Food{{ID: "food-1", Name: "oats", Calories100: 389, Protein100: 16.9}}, nil
 }
 
-func (s *stubFoodRepository) Update(ctx context.Context, req *UpdateFoodRequest) (*Food, error) {
+func (s *stubFoodRepository) Update(ctx context.Context, userID string, req *UpdateFoodRequest) (*Food, error) {
 	s.updateCalled = true
 	if s.err != nil {
 		return nil, s.err
@@ -94,7 +95,7 @@ func (s *stubFoodRepository) Update(ctx context.Context, req *UpdateFoodRequest)
 	return s.food, nil
 }
 
-func (s *stubFoodRepository) Delete(ctx context.Context, id string) error {
+func (s *stubFoodRepository) Delete(ctx context.Context, userID, id string) error {
 	s.deleteCalled = true
 	return s.err
 }
@@ -103,8 +104,8 @@ func (s *stubFoodRepository) Delete(ctx context.Context, id string) error {
 
 func TestCreateMealValidation(t *testing.T) {
 	validFoods := []MealFoodInput{
-		{FoodID: "food-1", WeightG: 150},
-		{FoodID: "food-2", WeightG: 60},
+		{Name: "oats", WeightG: 150, Calories: 200, Protein: 10, Carbohydrates: 30, Fat: 5},
+		{Name: "milk", WeightG: 60, Calories: 30, Protein: 2, Carbohydrates: 3, Fat: 1},
 	}
 
 	tests := []struct {
@@ -137,32 +138,39 @@ func TestCreateMealValidation(t *testing.T) {
 			wantErr: "at least one food",
 		},
 		{
-			name: "blank food_id",
+			name: "blank food name",
 			req: &CreateMealRequest{Name: "breakfast", Foods: []MealFoodInput{
-				{FoodID: "  ", WeightG: 100},
+				{Name: "  ", WeightG: 100},
 			}},
-			wantErr: "food_id is required",
+			wantErr: "name is required",
 		},
 		{
 			name: "zero weight",
 			req: &CreateMealRequest{Name: "breakfast", Foods: []MealFoodInput{
-				{FoodID: "food-1", WeightG: 0},
+				{Name: "oats", WeightG: 0},
 			}},
 			wantErr: "weight_g must be greater than zero",
 		},
 		{
 			name: "negative weight",
 			req: &CreateMealRequest{Name: "breakfast", Foods: []MealFoodInput{
-				{FoodID: "food-1", WeightG: -50},
+				{Name: "oats", WeightG: -50},
 			}},
 			wantErr: "weight_g must be greater than zero",
 		},
 		{
 			name: "absurd weight",
 			req: &CreateMealRequest{Name: "breakfast", Foods: []MealFoodInput{
-				{FoodID: "food-1", WeightG: 5001},
+				{Name: "oats", WeightG: 5001},
 			}},
 			wantErr: "weight_g must be at most 5000",
+		},
+		{
+			name: "negative macro",
+			req: &CreateMealRequest{Name: "breakfast", Foods: []MealFoodInput{
+				{Name: "oats", WeightG: 100, Protein: -1},
+			}},
+			wantErr: "macros must not be negative",
 		},
 	}
 
@@ -197,6 +205,99 @@ func TestCreateMealValidation(t *testing.T) {
 			}
 			if repo.createCalled {
 				t.Error("repository Create should not be called on validation failure")
+			}
+		})
+	}
+}
+
+// --- Meal food resolution (catalog match / auto-save) ---
+
+func TestResolveMealFood(t *testing.T) {
+	apple := Food{ID: "f-apple", Name: "apple", Calories100: 52, Protein100: 0.3, Carbohydrates100: 14, Fat100: 0.2}
+	apple2 := Food{ID: "f-apple2", Name: "apple_2", Calories100: 60, Protein100: 0.3, Carbohydrates100: 14, Fat100: 0.2}
+
+	tests := []struct {
+		name        string
+		saved       []Food
+		in          MealFoodInput
+		wantMatchID string  // non-empty means an existing food should be reused
+		wantCreate  string  // expected toCreate.Name; empty means no create expected
+		wantErr     string  // substring; empty means no error
+		wantCal100  float64 // checked only when checkCal is true
+		checkCal    bool
+	}{
+		{
+			name:        "exact match reuses existing food",
+			saved:       []Food{apple},
+			in:          MealFoodInput{Name: "apple", WeightG: 100, Calories: 52, Protein: 0.3, Carbohydrates: 14, Fat: 0.2},
+			wantMatchID: "f-apple",
+		},
+		{
+			name:       "unknown food is created",
+			saved:      []Food{apple},
+			in:         MealFoodInput{Name: "banana", WeightG: 100, Calories: 89, Protein: 1.1, Carbohydrates: 23, Fat: 0.3},
+			wantCreate: "banana",
+		},
+		{
+			name:       "same name different macros creates _2 variant",
+			saved:      []Food{apple},
+			in:         MealFoodInput{Name: "apple", WeightG: 100, Calories: 60, Protein: 0.3, Carbohydrates: 14, Fat: 0.2},
+			wantCreate: "apple_2",
+		},
+		{
+			name:        "variant exact match reuses _2",
+			saved:       []Food{apple, apple2},
+			in:          MealFoodInput{Name: "apple", WeightG: 100, Calories: 60, Protein: 0.3, Carbohydrates: 14, Fat: 0.2},
+			wantMatchID: "f-apple2",
+		},
+		{
+			name:    "third differing variant errors",
+			saved:   []Food{apple, apple2},
+			in:      MealFoodInput{Name: "apple", WeightG: 100, Calories: 70, Protein: 0.3, Carbohydrates: 14, Fat: 0.2},
+			wantErr: "two foods named",
+		},
+		{
+			name:       "totals are converted to per-100g",
+			saved:      nil,
+			in:         MealFoodInput{Name: "rice", WeightG: 200, Calories: 260, Protein: 5, Carbohydrates: 56, Fat: 0.6},
+			wantCreate: "rice",
+			wantCal100: 130,
+			checkCal:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matchID, toCreate, err := resolveMealFood(tt.saved, tt.in)
+
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got: %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantMatchID != "" {
+				if matchID != tt.wantMatchID {
+					t.Errorf("matchID = %q, want %q", matchID, tt.wantMatchID)
+				}
+				if toCreate != nil {
+					t.Errorf("expected no food to create, got %+v", toCreate)
+				}
+				return
+			}
+
+			if toCreate == nil {
+				t.Fatalf("expected a food to create (%q), got matchID=%q", tt.wantCreate, matchID)
+			}
+			if toCreate.Name != tt.wantCreate {
+				t.Errorf("toCreate.Name = %q, want %q", toCreate.Name, tt.wantCreate)
+			}
+			if tt.checkCal && toCreate.Calories100 != tt.wantCal100 {
+				t.Errorf("toCreate.Calories100 = %v, want %v", toCreate.Calories100, tt.wantCal100)
 			}
 		})
 	}
@@ -270,7 +371,7 @@ func TestCreateFoodValidation(t *testing.T) {
 			repo := &stubFoodRepository{}
 			svc := NewNutritionService(repo)
 
-			food, err := svc.CreateFood(context.Background(), tt.req)
+			food, err := svc.CreateFood(context.Background(), "user-1", tt.req)
 
 			if tt.wantErr == "" {
 				if err != nil {
@@ -306,7 +407,7 @@ func TestFoodIDValidation(t *testing.T) {
 		repo := &stubFoodRepository{}
 		svc := NewNutritionService(repo)
 
-		_, err := svc.UpdateFood(context.Background(), &UpdateFoodRequest{ID: "  ", Name: "oats", Calories100: 100})
+		_, err := svc.UpdateFood(context.Background(), "user-1", &UpdateFoodRequest{ID: "  ", Name: "oats", Calories100: 100})
 		if err == nil || !strings.Contains(err.Error(), "food id is required") {
 			t.Fatalf("expected food id validation error, got: %v", err)
 		}
@@ -319,7 +420,7 @@ func TestFoodIDValidation(t *testing.T) {
 		repo := &stubFoodRepository{}
 		svc := NewNutritionService(repo)
 
-		_, err := svc.UpdateFood(context.Background(), &UpdateFoodRequest{ID: "food-1", Name: "", Calories100: 100})
+		_, err := svc.UpdateFood(context.Background(), "user-1", &UpdateFoodRequest{ID: "food-1", Name: "", Calories100: 100})
 		if err == nil || !strings.Contains(err.Error(), "food name is required") {
 			t.Fatalf("expected name validation error, got: %v", err)
 		}
@@ -329,7 +430,7 @@ func TestFoodIDValidation(t *testing.T) {
 		repo := &stubFoodRepository{}
 		svc := NewNutritionService(repo)
 
-		err := svc.DeleteFood(context.Background(), "")
+		err := svc.DeleteFood(context.Background(), "user-1", "")
 		if err == nil || !strings.Contains(err.Error(), "food id is required") {
 			t.Fatalf("expected food id validation error, got: %v", err)
 		}
@@ -342,7 +443,7 @@ func TestFoodIDValidation(t *testing.T) {
 		repo := &stubFoodRepository{}
 		svc := NewNutritionService(repo)
 
-		_, err := svc.GetFood(context.Background(), "  ")
+		_, err := svc.GetFood(context.Background(), "user-1", "  ")
 		if err == nil || !strings.Contains(err.Error(), "food id is required") {
 			t.Fatalf("expected food id validation error, got: %v", err)
 		}
@@ -374,12 +475,20 @@ func doJSON(t *testing.T, mux *http.ServeMux, method, target, token string, body
 	return rec
 }
 
-// newFoodServer mounts the food routes (no auth middleware, as in main.go).
-func newFoodServer(repo FoodRepository) *http.ServeMux {
+// newFoodServer mounts the food routes behind real JWT middleware and
+// returns the mux together with a valid bearer token for user-1.
+func newFoodServer(t *testing.T, repo FoodRepository) (*http.ServeMux, string) {
+	t.Helper()
+	mgr := auth.NewManager("test-secret", 1, 1)
 	handler := NewNutritionHandler(NewNutritionService(repo), testLogger())
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-	return mux
+	handler.RegisterRoutes(mux, mgr.Middleware)
+
+	token, err := mgr.Generate("user-1", "user@test.com", "user")
+	if err != nil {
+		t.Fatalf("failed to generate test token: %v", err)
+	}
+	return mux, token
 }
 
 // newMealServer mounts the meal routes behind real JWT middleware and
@@ -400,10 +509,35 @@ func newMealServer(t *testing.T, repo MealRepository) (*http.ServeMux, string) {
 
 // --- Food handler tests ---
 
+func TestFoodEndpointsRequireAuth(t *testing.T) {
+	mux, _ := newFoodServer(t, &stubFoodRepository{})
+
+	routes := []struct {
+		method string
+		target string
+	}{
+		{http.MethodPost, "/food/create"},
+		{http.MethodGet, "/food/view"},
+		{http.MethodPut, "/food/update"},
+		{http.MethodDelete, "/food/delete"},
+	}
+
+	for _, rt := range routes {
+		t.Run(rt.method+" "+rt.target, func(t *testing.T) {
+			if rec := doJSON(t, mux, rt.method, rt.target, "", nil); rec.Code != http.StatusUnauthorized {
+				t.Errorf("no token: expected 401, got %d", rec.Code)
+			}
+			if rec := doJSON(t, mux, rt.method, rt.target, "garbage-token", nil); rec.Code != http.StatusUnauthorized {
+				t.Errorf("garbage token: expected 401, got %d", rec.Code)
+			}
+		})
+	}
+}
+
 func TestCreateFoodEndpoint(t *testing.T) {
 	t.Run("valid request", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{})
-		rec := doJSON(t, mux, http.MethodPost, "/food/create", "", CreateFoodRequest{
+		mux, token := newFoodServer(t, &stubFoodRepository{})
+		rec := doJSON(t, mux, http.MethodPost, "/food/create", token, CreateFoodRequest{
 			Name: "oats", Calories100: 389, Protein100: 16.9, Carbohydrates100: 66.3, Fat100: 6.9,
 		})
 		if rec.Code != http.StatusCreated {
@@ -419,8 +553,8 @@ func TestCreateFoodEndpoint(t *testing.T) {
 	})
 
 	t.Run("validation failure", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{})
-		rec := doJSON(t, mux, http.MethodPost, "/food/create", "", CreateFoodRequest{Name: "oats", Calories100: 901})
+		mux, token := newFoodServer(t, &stubFoodRepository{})
+		rec := doJSON(t, mux, http.MethodPost, "/food/create", token, CreateFoodRequest{Name: "oats", Calories100: 901})
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -434,8 +568,9 @@ func TestCreateFoodEndpoint(t *testing.T) {
 	})
 
 	t.Run("malformed JSON", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{})
+		mux, token := newFoodServer(t, &stubFoodRepository{})
 		req := httptest.NewRequest(http.MethodPost, "/food/create", strings.NewReader("{not json"))
+		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
@@ -444,8 +579,8 @@ func TestCreateFoodEndpoint(t *testing.T) {
 	})
 
 	t.Run("repository failure", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{err: errors.New("db down")})
-		rec := doJSON(t, mux, http.MethodPost, "/food/create", "", CreateFoodRequest{Name: "oats", Calories100: 389})
+		mux, token := newFoodServer(t, &stubFoodRepository{err: errors.New("db down")})
+		rec := doJSON(t, mux, http.MethodPost, "/food/create", token, CreateFoodRequest{Name: "oats", Calories100: 389})
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("expected 500, got %d", rec.Code)
 		}
@@ -454,8 +589,8 @@ func TestCreateFoodEndpoint(t *testing.T) {
 
 func TestViewFoodEndpoint(t *testing.T) {
 	t.Run("list all", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{})
-		rec := doJSON(t, mux, http.MethodGet, "/food/view", "", nil)
+		mux, token := newFoodServer(t, &stubFoodRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/food/view", token, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -469,16 +604,16 @@ func TestViewFoodEndpoint(t *testing.T) {
 	})
 
 	t.Run("by id found", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{food: &Food{ID: "food-1", Name: "oats"}})
-		rec := doJSON(t, mux, http.MethodGet, "/food/view?id=food-1", "", nil)
+		mux, token := newFoodServer(t, &stubFoodRepository{food: &Food{ID: "food-1", Name: "oats"}})
+		rec := doJSON(t, mux, http.MethodGet, "/food/view?id=food-1", token, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("by id not found", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{food: nil})
-		rec := doJSON(t, mux, http.MethodGet, "/food/view?id=missing", "", nil)
+		mux, token := newFoodServer(t, &stubFoodRepository{food: nil})
+		rec := doJSON(t, mux, http.MethodGet, "/food/view?id=missing", token, nil)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -489,24 +624,24 @@ func TestUpdateFoodEndpoint(t *testing.T) {
 	validReq := UpdateFoodRequest{ID: "food-1", Name: "oats v2", Calories100: 380}
 
 	t.Run("found", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{food: &Food{ID: "food-1", Name: "oats v2"}})
-		rec := doJSON(t, mux, http.MethodPut, "/food/update", "", validReq)
+		mux, token := newFoodServer(t, &stubFoodRepository{food: &Food{ID: "food-1", Name: "oats v2"}})
+		rec := doJSON(t, mux, http.MethodPut, "/food/update", token, validReq)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("not found", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{food: nil})
-		rec := doJSON(t, mux, http.MethodPut, "/food/update", "", validReq)
+		mux, token := newFoodServer(t, &stubFoodRepository{food: nil})
+		rec := doJSON(t, mux, http.MethodPut, "/food/update", token, validReq)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("missing id", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{})
-		rec := doJSON(t, mux, http.MethodPut, "/food/update", "", UpdateFoodRequest{Name: "oats"})
+		mux, token := newFoodServer(t, &stubFoodRepository{})
+		rec := doJSON(t, mux, http.MethodPut, "/food/update", token, UpdateFoodRequest{Name: "oats"})
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -515,16 +650,16 @@ func TestUpdateFoodEndpoint(t *testing.T) {
 
 func TestDeleteFoodEndpoint(t *testing.T) {
 	t.Run("valid id", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{})
-		rec := doJSON(t, mux, http.MethodDelete, "/food/delete?id=food-1", "", nil)
+		mux, token := newFoodServer(t, &stubFoodRepository{})
+		rec := doJSON(t, mux, http.MethodDelete, "/food/delete?id=food-1", token, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("missing id", func(t *testing.T) {
-		mux := newFoodServer(&stubFoodRepository{})
-		rec := doJSON(t, mux, http.MethodDelete, "/food/delete", "", nil)
+		mux, token := newFoodServer(t, &stubFoodRepository{})
+		rec := doJSON(t, mux, http.MethodDelete, "/food/delete", token, nil)
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -561,7 +696,7 @@ func TestCreateMealEndpoint(t *testing.T) {
 		mux, token := newMealServer(t, &stubMealRepository{})
 		rec := doJSON(t, mux, http.MethodPost, "/meal/create", token, CreateMealRequest{
 			Name:  "breakfast",
-			Foods: []MealFoodInput{{FoodID: "food-1", WeightG: 150}},
+			Foods: []MealFoodInput{{Name: "oats", WeightG: 150, Calories: 200, Protein: 10, Carbohydrates: 30, Fat: 5}},
 		})
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())

@@ -23,14 +23,20 @@ func validateMealInput(name string, foods []MealFoodInput) error {
 		return fmt.Errorf("validation: a meal must contain at least one food")
 	}
 	for i, f := range foods {
-		if strings.TrimSpace(f.FoodID) == "" {
-			return fmt.Errorf("validation: food %d: food_id is required", i)
+		if strings.TrimSpace(f.Name) == "" {
+			return fmt.Errorf("validation: food %d: name is required", i)
+		}
+		if len(f.Name) > maxNameLength {
+			return fmt.Errorf("validation: food %d: name must be at most %d characters", i, maxNameLength)
 		}
 		if f.WeightG <= 0 {
 			return fmt.Errorf("validation: food %d: weight_g must be greater than zero", i)
 		}
 		if f.WeightG > maxWeightG {
 			return fmt.Errorf("validation: food %d: weight_g must be at most %d", i, maxWeightG)
+		}
+		if f.Calories < 0 || f.Protein < 0 || f.Carbohydrates < 0 || f.Fat < 0 {
+			return fmt.Errorf("validation: food %d: macros must not be negative", i)
 		}
 	}
 	return nil

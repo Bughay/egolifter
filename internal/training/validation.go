@@ -8,7 +8,7 @@ import (
 const (
 	maxNameLength = 100
 	maxWeightKg   = 1000
-	maxReps       = 500
+	maxReps       = 100
 )
 
 func validateRoutineInput(name string, entries []EntryInput) error {

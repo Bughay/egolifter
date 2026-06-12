@@ -45,18 +45,46 @@ func (r *pgMealRepository) Create(ctx context.Context, userID string, req *Creat
 		return nil, fmt.Errorf("mealRepo.Create: %w", err)
 	}
 
+	// Load the user's food catalog once; logged foods are matched against it and any
+	// new food is saved for reuse (see resolveMealFood).
+	savedRows, err := qtx.ListFoods(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("mealRepo.Create: list foods: %w", err)
+	}
+	saved := make([]Food, 0, len(savedRows))
+	for _, fr := range savedRows {
+		saved = append(saved, *toFood(fr))
+	}
+
 	for _, f := range req.Foods {
+		foodID, toCreate, err := resolveMealFood(saved, f)
+		if err != nil {
+			return nil, err
+		}
+		if toCreate != nil {
+			created, err := qtx.CreateFood(ctx, db.CreateFoodParams{
+				UserID:           userID,
+				Name:             toCreate.Name,
+				Calories100:      toCreate.Calories100,
+				Protein100:       toCreate.Protein100,
+				Carbohydrates100: toCreate.Carbohydrates100,
+				Fat100:           toCreate.Fat100,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("mealRepo.Create: create food %q: %w", toCreate.Name, err)
+			}
+			foodID = created.ID
+			// Make the new food visible to later entries in this same meal.
+			saved = append(saved, *toFood(created))
+		}
+
 		if _, err := qtx.CreateFoodConsumed(ctx, db.CreateFoodConsumedParams{
 			UserID:  userID,
 			MealID:  row.ID,
-			FoodID:  f.FoodID,
+			FoodID:  foodID,
 			WeightG: f.WeightG,
 		}); err != nil {
-			// The INSERT ... SELECT matches no row when the food does not exist.
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil, fmt.Errorf("validation: food %s not found", f.FoodID)
-			}
-			return nil, fmt.Errorf("mealRepo.Create: insert food consumed (food %s): %w", f.FoodID, err)
+			return nil, fmt.Errorf("mealRepo.Create: insert food consumed (food %q): %w", f.Name, err)
 		}
 	}
 
