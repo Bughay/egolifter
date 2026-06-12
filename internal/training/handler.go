@@ -30,6 +30,8 @@ func (h *TrainingHandler) RegisterRoutes(mux *http.ServeMux, mw func(http.Handle
 	mux.Handle("GET /training/routine/view", mw(http.HandlerFunc(h.ViewRoutines)))
 	mux.Handle("POST /training/log", mw(http.HandlerFunc(h.LogWorkout)))
 	mux.Handle("GET /training/view", mw(http.HandlerFunc(h.ViewWorkouts)))
+	mux.Handle("GET /training/by-date", mw(http.HandlerFunc(h.ViewWorkoutsByDate)))
+	mux.Handle("DELETE /training/del", mw(http.HandlerFunc(h.DeleteWorkout)))
 }
 
 // userID extracts the authenticated user's ID from the JWT claims in the context.
@@ -168,6 +170,82 @@ func (h *TrainingHandler) ViewWorkouts(w http.ResponseWriter, r *http.Request) {
 
 	log.InfoContext(r.Context(), "workouts listed", "date", date, "count", len(workouts))
 	lib.WriteJSON(w, http.StatusOK, workouts)
+}
+
+// ViewWorkoutsByDate lists the workouts performed between ?date_from= and
+// ?date_to= (YYYY-MM-DD, inclusive); either bound defaults to today.
+func (h *TrainingHandler) ViewWorkoutsByDate(w http.ResponseWriter, r *http.Request) {
+	log := h.logger.With("method", r.Method, "path", r.URL.Path)
+
+	uid, ok := userID(r)
+	if !ok {
+		log.WarnContext(r.Context(), "unauthenticated workout view attempt")
+		lib.WriteError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	log = log.With("user_id", uid)
+
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
+
+	workouts, err := h.trainingSvc.ListWorkoutsByDateRange(r.Context(), uid, dateFrom, dateTo)
+	if err != nil {
+		var parseErr *time.ParseError
+		if errors.As(err, &parseErr) {
+			log.WarnContext(r.Context(), "invalid date parameter", "date_from", dateFrom, "date_to", dateTo, "error", err)
+			lib.WriteError(w, http.StatusBadRequest, "invalid date, expected YYYY-MM-DD")
+			return
+		}
+		if isValidationErr(err) {
+			log.WarnContext(r.Context(), "invalid date range", "date_from", dateFrom, "date_to", dateTo, "error", err)
+			lib.WriteError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		log.ErrorContext(r.Context(), "failed to list workouts by date", "date_from", dateFrom, "date_to", dateTo, "error", err)
+		lib.WriteError(w, http.StatusInternalServerError, "failed to list workouts")
+		return
+	}
+
+	log.InfoContext(r.Context(), "workouts listed by date", "date_from", dateFrom, "date_to", dateTo, "count", len(workouts))
+	lib.WriteJSON(w, http.StatusOK, workouts)
+}
+
+// DeleteWorkout removes the workout given by ?id= together with all of its
+// exercise rows.
+func (h *TrainingHandler) DeleteWorkout(w http.ResponseWriter, r *http.Request) {
+	log := h.logger.With("method", r.Method, "path", r.URL.Path)
+
+	uid, ok := userID(r)
+	if !ok {
+		log.WarnContext(r.Context(), "unauthenticated workout delete attempt")
+		lib.WriteError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	log = log.With("user_id", uid)
+
+	id := r.URL.Query().Get("id")
+
+	found, err := h.trainingSvc.DeleteWorkout(r.Context(), uid, id)
+	if err != nil {
+		if isValidationErr(err) {
+			log.WarnContext(r.Context(), "workout validation failed", "error", err)
+			lib.WriteError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		log.ErrorContext(r.Context(), "failed to delete workout", "workout_id", id, "error", err)
+		lib.WriteError(w, http.StatusInternalServerError, "failed to delete workout")
+		return
+	}
+	if !found {
+		log.WarnContext(r.Context(), "workout not found", "workout_id", id)
+		lib.WriteError(w, http.StatusNotFound, "workout not found")
+		return
+	}
+
+	log.InfoContext(r.Context(), "workout deleted", "workout_id", id)
+	lib.WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "workout deleted successfully",
+	})
 }
 
 // isValidationErr checks if the error originated from a validation rule.

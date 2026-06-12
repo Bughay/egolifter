@@ -125,6 +125,32 @@ func (q *Queries) CreateWorkoutRoutineEntry(ctx context.Context, arg CreateWorko
 	return i, err
 }
 
+const deleteWorkout = `-- name: DeleteWorkout :execrows
+WITH deleted_exercises AS (
+    DELETE FROM exercise
+    WHERE workout_id = $1::uuid
+      AND EXISTS (
+          SELECT 1 FROM workout w
+          WHERE w.id = $1::uuid AND w.user_id = $2::uuid
+      )
+)
+DELETE FROM workout
+WHERE id = $1::uuid AND user_id = $2::uuid
+`
+
+type DeleteWorkoutParams struct {
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) DeleteWorkout(ctx context.Context, arg DeleteWorkoutParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteWorkout, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getWorkoutRoutineByID = `-- name: GetWorkoutRoutineByID :one
 SELECT id, user_id, name, created_at, updated_at FROM workout_routine
 WHERE id = $1 AND user_id = $2
@@ -261,6 +287,45 @@ type ListWorkoutsByDateParams struct {
 
 func (q *Queries) ListWorkoutsByDate(ctx context.Context, arg ListWorkoutsByDateParams) ([]Workout, error) {
 	rows, err := q.db.Query(ctx, listWorkoutsByDate, arg.UserID, arg.Column2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workout
+	for rows.Next() {
+		var i Workout
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkoutsByDateRange = `-- name: ListWorkoutsByDateRange :many
+SELECT id, user_id, name, created_at, updated_at FROM workout
+WHERE user_id = $1
+  AND created_at::date BETWEEN $2::date AND $3::date
+ORDER BY created_at DESC
+`
+
+type ListWorkoutsByDateRangeParams struct {
+	UserID   string      `json:"user_id"`
+	DateFrom pgtype.Date `json:"date_from"`
+	DateTo   pgtype.Date `json:"date_to"`
+}
+
+func (q *Queries) ListWorkoutsByDateRange(ctx context.Context, arg ListWorkoutsByDateRangeParams) ([]Workout, error) {
+	rows, err := q.db.Query(ctx, listWorkoutsByDateRange, arg.UserID, arg.DateFrom, arg.DateTo)
 	if err != nil {
 		return nil, err
 	}

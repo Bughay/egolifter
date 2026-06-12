@@ -8,6 +8,8 @@ package db
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createFoodConsumed = `-- name: CreateFoodConsumed :one
@@ -79,6 +81,28 @@ func (q *Queries) CreateMeal(ctx context.Context, arg CreateMealParams) (Meal, e
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deleteMeal = `-- name: DeleteMeal :execrows
+WITH deleted_foods AS (
+    DELETE FROM food_consumed
+    WHERE meal_id = $1::uuid AND user_id = $2::uuid
+)
+DELETE FROM meal
+WHERE id = $1::uuid AND user_id = $2::uuid
+`
+
+type DeleteMealParams struct {
+	ID     string `json:"id"`
+	UserID string `json:"user_id"`
+}
+
+func (q *Queries) DeleteMeal(ctx context.Context, arg DeleteMealParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteMeal, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getMealByID = `-- name: GetMealByID :one
@@ -221,6 +245,68 @@ func (q *Queries) ListMeals(ctx context.Context, userID string) ([]ListMealsRow,
 	var items []ListMealsRow
 	for rows.Next() {
 		var i ListMealsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.TotalCalories,
+			&i.TotalProtein,
+			&i.TotalCarbohydrates,
+			&i.TotalFat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMealsByDateRange = `-- name: ListMealsByDateRange :many
+SELECT m.id, m.user_id, m.name, m.created_at, m.updated_at,
+       coalesce(sum(fc.total_calories), 0)::float8      AS total_calories,
+       coalesce(sum(fc.total_protein), 0)::float8       AS total_protein,
+       coalesce(sum(fc.total_carbohydrates), 0)::float8 AS total_carbohydrates,
+       coalesce(sum(fc.total_fat), 0)::float8           AS total_fat
+FROM meal m
+LEFT JOIN food_consumed fc ON fc.meal_id = m.id
+WHERE m.user_id = $1
+  AND m.created_at::date BETWEEN $2::date AND $3::date
+GROUP BY m.id
+ORDER BY m.created_at DESC
+`
+
+type ListMealsByDateRangeParams struct {
+	UserID   string      `json:"user_id"`
+	DateFrom pgtype.Date `json:"date_from"`
+	DateTo   pgtype.Date `json:"date_to"`
+}
+
+type ListMealsByDateRangeRow struct {
+	ID                 string    `json:"id"`
+	UserID             string    `json:"user_id"`
+	Name               string    `json:"name"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	TotalCalories      float64   `json:"total_calories"`
+	TotalProtein       float64   `json:"total_protein"`
+	TotalCarbohydrates float64   `json:"total_carbohydrates"`
+	TotalFat           float64   `json:"total_fat"`
+}
+
+func (q *Queries) ListMealsByDateRange(ctx context.Context, arg ListMealsByDateRangeParams) ([]ListMealsByDateRangeRow, error) {
+	rows, err := q.db.Query(ctx, listMealsByDateRange, arg.UserID, arg.DateFrom, arg.DateTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMealsByDateRangeRow
+	for rows.Next() {
+		var i ListMealsByDateRangeRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,

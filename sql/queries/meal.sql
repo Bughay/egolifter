@@ -41,6 +41,27 @@ WHERE m.user_id = $1
 GROUP BY m.id
 ORDER BY m.created_at DESC;
 
+-- name: ListMealsByDateRange :many
+SELECT m.id, m.user_id, m.name, m.created_at, m.updated_at,
+       coalesce(sum(fc.total_calories), 0)::float8      AS total_calories,
+       coalesce(sum(fc.total_protein), 0)::float8       AS total_protein,
+       coalesce(sum(fc.total_carbohydrates), 0)::float8 AS total_carbohydrates,
+       coalesce(sum(fc.total_fat), 0)::float8           AS total_fat
+FROM meal m
+LEFT JOIN food_consumed fc ON fc.meal_id = m.id
+WHERE m.user_id = sqlc.arg(user_id)
+  AND m.created_at::date BETWEEN sqlc.arg(date_from)::date AND sqlc.arg(date_to)::date
+GROUP BY m.id
+ORDER BY m.created_at DESC;
+
+-- name: DeleteMeal :execrows
+WITH deleted_foods AS (
+    DELETE FROM food_consumed
+    WHERE meal_id = sqlc.arg(id)::uuid AND user_id = sqlc.arg(user_id)::uuid
+)
+DELETE FROM meal
+WHERE id = sqlc.arg(id)::uuid AND user_id = sqlc.arg(user_id)::uuid;
+
 -- name: ListFoodConsumedByMeal :many
 SELECT fc.id,
        fc.food_id,

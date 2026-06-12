@@ -27,6 +27,19 @@ type Ingredient struct {
 	Fat100           float64 `json:"fat_100"`
 }
 
+// RecipeFood is an ingredient's food with its macros already adjusted for the
+// ingredient's weight: total = (weight_g / 100) * per_100_value.
+type RecipeFood struct {
+	FoodID             string  `json:"food_id"`
+	FoodName           string  `json:"food_name"`
+	WeightG            float64 `json:"weight_g"`
+	Notes              *string `json:"notes,omitempty"`
+	TotalCalories      float64 `json:"total_calories"`
+	TotalProtein       float64 `json:"total_protein"`
+	TotalCarbohydrates float64 `json:"total_carbohydrates"`
+	TotalFat           float64 `json:"total_fat"`
+}
+
 // --- Request Payloads (Incoming) ---
 
 type IngredientInput struct {

@@ -19,6 +19,8 @@ type TrainingRepository interface {
 	ListRoutines(ctx context.Context, userID string) ([]Routine, error)
 	LogWorkout(ctx context.Context, userID, name string, entries []RoutineEntry) (*Workout, error)
 	ListWorkoutsByDate(ctx context.Context, userID string, date time.Time) ([]Workout, error)
+	ListWorkoutsByDateRange(ctx context.Context, userID string, from, to time.Time) ([]Workout, error)
+	DeleteWorkout(ctx context.Context, userID, id string) (bool, error)
 }
 
 type pgTrainingRepository struct {
@@ -161,6 +163,41 @@ func (r *pgTrainingRepository) ListWorkoutsByDate(ctx context.Context, userID st
 		workouts = append(workouts, *workout)
 	}
 	return workouts, nil
+}
+
+func (r *pgTrainingRepository) ListWorkoutsByDateRange(ctx context.Context, userID string, from, to time.Time) ([]Workout, error) {
+	rows, err := r.queries.ListWorkoutsByDateRange(ctx, db.ListWorkoutsByDateRangeParams{
+		UserID:   userID,
+		DateFrom: pgtype.Date{Time: from, Valid: true},
+		DateTo:   pgtype.Date{Time: to, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("trainingRepo.ListWorkoutsByDateRange: %w", err)
+	}
+
+	workouts := make([]Workout, 0, len(rows))
+	for _, row := range rows {
+		workout := toWorkout(row)
+		exRows, err := r.queries.ListExercisesByWorkout(ctx, row.ID)
+		if err != nil {
+			return nil, fmt.Errorf("trainingRepo.ListWorkoutsByDateRange: exercises: %w", err)
+		}
+		for _, exRow := range exRows {
+			workout.Exercises = append(workout.Exercises, toExercise(exRow))
+		}
+		workouts = append(workouts, *workout)
+	}
+	return workouts, nil
+}
+
+// DeleteWorkout removes the workout and all of its exercise rows; the returned
+// bool reports whether a workout was actually deleted.
+func (r *pgTrainingRepository) DeleteWorkout(ctx context.Context, userID, id string) (bool, error) {
+	rows, err := r.queries.DeleteWorkout(ctx, db.DeleteWorkoutParams{ID: id, UserID: userID})
+	if err != nil {
+		return false, fmt.Errorf("trainingRepo.DeleteWorkout: %w", err)
+	}
+	return rows > 0, nil
 }
 
 // attachEntries loads the routine's entries and sets them on the domain model.

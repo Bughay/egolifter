@@ -25,6 +25,9 @@ type stubRecipeRepository struct {
 	updateCalled bool
 	deleteCalled bool
 	deletedID    string
+
+	deleteMissing bool         // when set, Delete reports the recipe as not found
+	foods         []RecipeFood // returned by GetFoods
 }
 
 func (s *stubRecipeRepository) Create(ctx context.Context, userID string, req *CreateRecipeRequest) (*Recipe, error) {
@@ -57,10 +60,20 @@ func (s *stubRecipeRepository) Update(ctx context.Context, userID string, req *U
 	return s.recipe, nil
 }
 
-func (s *stubRecipeRepository) Delete(ctx context.Context, userID, id string) error {
+func (s *stubRecipeRepository) GetFoods(ctx context.Context, userID, recipeID string) ([]RecipeFood, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.foods, nil
+}
+
+func (s *stubRecipeRepository) Delete(ctx context.Context, userID, id string) (bool, error) {
 	s.deleteCalled = true
 	s.deletedID = id
-	return s.err
+	if s.err != nil {
+		return false, s.err
+	}
+	return !s.deleteMissing, nil
 }
 
 // --- Service tests ---
@@ -228,7 +241,7 @@ func TestDeleteRecipeValidation(t *testing.T) {
 		repo := &stubRecipeRepository{}
 		svc := NewRecipeService(repo)
 
-		err := svc.DeleteRecipe(context.Background(), "user-1", "")
+		_, err := svc.DeleteRecipe(context.Background(), "user-1", "")
 		if err == nil || !strings.Contains(err.Error(), "recipe id is required") {
 			t.Fatalf("expected recipe id validation error, got: %v", err)
 		}
@@ -241,8 +254,9 @@ func TestDeleteRecipeValidation(t *testing.T) {
 		repo := &stubRecipeRepository{}
 		svc := NewRecipeService(repo)
 
-		if err := svc.DeleteRecipe(context.Background(), "user-1", "recipe-1"); err != nil {
-			t.Fatalf("expected success, got error: %v", err)
+		found, err := svc.DeleteRecipe(context.Background(), "user-1", "recipe-1")
+		if err != nil || !found {
+			t.Fatalf("expected success, got found=%v error: %v", found, err)
 		}
 		if !repo.deleteCalled || repo.deletedID != "recipe-1" {
 			t.Fatalf("expected repository Delete called with recipe-1, called=%v id=%q", repo.deleteCalled, repo.deletedID)
@@ -314,7 +328,8 @@ func TestRecipeEndpointsRequireAuth(t *testing.T) {
 		{http.MethodPost, "/recipe/create"},
 		{http.MethodGet, "/recipe/view"},
 		{http.MethodPut, "/recipe/update"},
-		{http.MethodDelete, "/recipe/delete"},
+		{http.MethodDelete, "/recipe/del"},
+		{http.MethodGet, "/recipe/getfoods"},
 	}
 
 	for _, rt := range routes {
@@ -445,17 +460,131 @@ func TestUpdateRecipeEndpoint(t *testing.T) {
 	})
 }
 
+func TestScaleByWeight(t *testing.T) {
+	cases := []struct {
+		per100, weightG, want float64
+	}{
+		{389, 80, 311.2},
+		{60, 250, 150},
+		{100, 100, 100},
+		{50, 0, 0},
+	}
+	for _, c := range cases {
+		if got := scaleByWeight(c.per100, c.weightG); got != c.want {
+			t.Errorf("scaleByWeight(%v, %v) = %v, want %v", c.per100, c.weightG, got, c.want)
+		}
+	}
+}
+
+func TestGetRecipeFoodsService(t *testing.T) {
+	t.Run("blank id", func(t *testing.T) {
+		svc := NewRecipeService(&stubRecipeRepository{})
+		_, err := svc.GetRecipeFoods(context.Background(), "user-1", "")
+		if err == nil || !strings.Contains(err.Error(), "recipe id is required") {
+			t.Fatalf("expected recipe id validation error, got: %v", err)
+		}
+	})
+
+	t.Run("returns foods", func(t *testing.T) {
+		repo := &stubRecipeRepository{foods: []RecipeFood{{FoodID: "food-1", FoodName: "oats", WeightG: 80, TotalCalories: 311.2}}}
+		svc := NewRecipeService(repo)
+		foods, err := svc.GetRecipeFoods(context.Background(), "user-1", "recipe-1")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(foods) != 1 || foods[0].TotalCalories != 311.2 {
+			t.Fatalf("unexpected foods: %+v", foods)
+		}
+	})
+
+	t.Run("recipe not found", func(t *testing.T) {
+		// No foods and FindByID returns nil → not found.
+		svc := NewRecipeService(&stubRecipeRepository{recipe: nil})
+		foods, err := svc.GetRecipeFoods(context.Background(), "user-1", "missing")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if foods != nil {
+			t.Fatalf("expected nil foods for missing recipe, got: %+v", foods)
+		}
+	})
+
+	t.Run("recipe with no ingredients", func(t *testing.T) {
+		repo := &stubRecipeRepository{recipe: &Recipe{ID: "recipe-1", Ingredients: []Ingredient{}}}
+		svc := NewRecipeService(repo)
+		foods, err := svc.GetRecipeFoods(context.Background(), "user-1", "recipe-1")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if foods == nil || len(foods) != 0 {
+			t.Fatalf("expected empty (non-nil) foods, got: %+v", foods)
+		}
+	})
+}
+
+func TestGetRecipeFoodsEndpoint(t *testing.T) {
+	t.Run("valid request", func(t *testing.T) {
+		repo := &stubRecipeRepository{foods: []RecipeFood{{FoodID: "food-1", FoodName: "oats", WeightG: 80, TotalCalories: 311.2}}}
+		mux, token := newRecipeServer(t, repo)
+		rec := doJSON(t, mux, http.MethodGet, "/recipe/getfoods?id=recipe-1", token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var foods []RecipeFood
+		if err := json.NewDecoder(rec.Body).Decode(&foods); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(foods) != 1 || foods[0].FoodName != "oats" || foods[0].TotalCalories != 311.2 {
+			t.Errorf("unexpected foods in response: %+v", foods)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		mux, token := newRecipeServer(t, &stubRecipeRepository{recipe: nil})
+		rec := doJSON(t, mux, http.MethodGet, "/recipe/getfoods?id=missing", token, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("missing id", func(t *testing.T) {
+		mux, token := newRecipeServer(t, &stubRecipeRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/recipe/getfoods", token, nil)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
 func TestDeleteRecipeEndpoint(t *testing.T) {
-	mux, token := newRecipeServer(t, &stubRecipeRepository{})
-	rec := doJSON(t, mux, http.MethodDelete, "/recipe/delete?id=recipe-1", token, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	var body map[string]string
-	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if body["message"] == "" {
-		t.Errorf("expected a confirmation message, got: %v", body)
-	}
+	t.Run("valid request", func(t *testing.T) {
+		mux, token := newRecipeServer(t, &stubRecipeRepository{})
+		rec := doJSON(t, mux, http.MethodDelete, "/recipe/del?id=recipe-1", token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var body map[string]string
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if body["message"] == "" {
+			t.Errorf("expected a confirmation message, got: %v", body)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		mux, token := newRecipeServer(t, &stubRecipeRepository{deleteMissing: true})
+		rec := doJSON(t, mux, http.MethodDelete, "/recipe/del?id=missing", token, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("missing id", func(t *testing.T) {
+		mux, token := newRecipeServer(t, &stubRecipeRepository{})
+		rec := doJSON(t, mux, http.MethodDelete, "/recipe/del", token, nil)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }

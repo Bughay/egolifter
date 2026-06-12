@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Bughay/egolifter/internal/db"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,6 +17,8 @@ type MealRepository interface {
 	Create(ctx context.Context, userID string, req *CreateMealRequest) (*Meal, error)
 	FindByID(ctx context.Context, userID, id string) (*Meal, error)
 	List(ctx context.Context, userID string) ([]Meal, error)
+	ListByDateRange(ctx context.Context, userID string, from, to time.Time) ([]Meal, error)
+	Delete(ctx context.Context, userID, id string) (bool, error)
 }
 
 type pgMealRepository struct {
@@ -143,6 +147,43 @@ func (r *pgMealRepository) List(ctx context.Context, userID string) ([]Meal, err
 	rows, err := r.queries.ListMeals(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("mealRepo.List: %w", err)
+	}
+	meals := make([]Meal, 0, len(rows))
+	for _, row := range rows {
+		meals = append(meals, Meal{
+			ID:                 row.ID,
+			UserID:             row.UserID,
+			Name:               row.Name,
+			Foods:              []ConsumedFood{},
+			TotalCalories:      row.TotalCalories,
+			TotalProtein:       row.TotalProtein,
+			TotalCarbohydrates: row.TotalCarbohydrates,
+			TotalFat:           row.TotalFat,
+			CreatedAt:          row.CreatedAt,
+			UpdatedAt:          row.UpdatedAt,
+		})
+	}
+	return meals, nil
+}
+
+// Delete removes the meal and all of its food_consumed rows; the returned
+// bool reports whether a meal was actually deleted.
+func (r *pgMealRepository) Delete(ctx context.Context, userID, id string) (bool, error) {
+	rows, err := r.queries.DeleteMeal(ctx, db.DeleteMealParams{ID: id, UserID: userID})
+	if err != nil {
+		return false, fmt.Errorf("mealRepo.Delete: %w", err)
+	}
+	return rows > 0, nil
+}
+
+func (r *pgMealRepository) ListByDateRange(ctx context.Context, userID string, from, to time.Time) ([]Meal, error) {
+	rows, err := r.queries.ListMealsByDateRange(ctx, db.ListMealsByDateRangeParams{
+		UserID:   userID,
+		DateFrom: pgtype.Date{Time: from, Valid: true},
+		DateTo:   pgtype.Date{Time: to, Valid: true},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mealRepo.ListByDateRange: %w", err)
 	}
 	meals := make([]Meal, 0, len(rows))
 	for _, row := range rows {

@@ -29,6 +29,13 @@ type stubTrainingRepository struct {
 	loggedEntries       []RoutineEntry
 	listDateCalled      bool
 	listDate            time.Time
+
+	rangeFrom time.Time // recorded by ListWorkoutsByDateRange
+	rangeTo   time.Time
+
+	deleteCalled  bool
+	deletedID     string // recorded by DeleteWorkout
+	deleteMissing bool   // when set, DeleteWorkout reports the workout as not found
 }
 
 func (s *stubTrainingRepository) CreateRoutine(ctx context.Context, userID string, req *CreateRoutineRequest) (*Routine, error) {
@@ -78,6 +85,23 @@ func (s *stubTrainingRepository) ListWorkoutsByDate(ctx context.Context, userID 
 		return nil, s.err
 	}
 	return []Workout{{ID: "workout-1", Name: "push day", Exercises: []Exercise{}, PerformedAt: date}}, nil
+}
+
+func (s *stubTrainingRepository) ListWorkoutsByDateRange(ctx context.Context, userID string, from, to time.Time) ([]Workout, error) {
+	s.rangeFrom, s.rangeTo = from, to
+	if s.err != nil {
+		return nil, s.err
+	}
+	return []Workout{{ID: "workout-1", Name: "push day", Exercises: []Exercise{}, PerformedAt: from}}, nil
+}
+
+func (s *stubTrainingRepository) DeleteWorkout(ctx context.Context, userID, id string) (bool, error) {
+	s.deleteCalled = true
+	s.deletedID = id
+	if s.err != nil {
+		return false, s.err
+	}
+	return !s.deleteMissing, nil
 }
 
 // --- Service tests ---
@@ -277,6 +301,119 @@ func TestLogRoutine(t *testing.T) {
 			t.Fatalf("expected repository error to propagate, got: %v", err)
 		}
 	})
+
+	t.Run("custom exercises override routine entries", func(t *testing.T) {
+		repo := &stubTrainingRepository{routine: routine}
+		svc := NewTrainingService(repo)
+
+		edited := []EntryInput{
+			{Name: "bench press", WeightKg: 80, Reps: 6}, // heavier than the routine's 75.5
+			{Name: "dips", WeightKg: 10, Reps: 12},       // exercise not in the routine
+		}
+		workout, err := svc.LogRoutine(context.Background(), "user-1", &LogWorkoutRequest{RoutineID: "routine-1", Exercises: edited})
+		if err != nil {
+			t.Fatalf("expected success, got error: %v", err)
+		}
+		if repo.loggedName != routine.Name {
+			t.Errorf("expected workout named %q, got %q", routine.Name, repo.loggedName)
+		}
+		if len(repo.loggedEntries) != 2 {
+			t.Fatalf("expected the 2 edited exercises logged, got %d", len(repo.loggedEntries))
+		}
+		for i, e := range edited {
+			got := repo.loggedEntries[i]
+			if got.Name != e.Name || got.WeightKg != e.WeightKg || got.Reps != e.Reps {
+				t.Errorf("exercise %d: expected %+v, got %+v", i, e, got)
+			}
+		}
+		if workout == nil || len(workout.Exercises) != 2 {
+			t.Fatalf("unexpected workout returned: %+v", workout)
+		}
+	})
+
+	t.Run("exercises without routine but with name", func(t *testing.T) {
+		repo := &stubTrainingRepository{}
+		svc := NewTrainingService(repo)
+
+		workout, err := svc.LogRoutine(context.Background(), "user-1", &LogWorkoutRequest{
+			Name:      "improvised session",
+			Exercises: []EntryInput{{Name: "squat", WeightKg: 100, Reps: 5}},
+		})
+		if err != nil {
+			t.Fatalf("expected success, got error: %v", err)
+		}
+		if workout == nil || repo.loggedName != "improvised session" {
+			t.Fatalf("expected custom-named workout, got name %q workout %+v", repo.loggedName, workout)
+		}
+	})
+
+	t.Run("invalid custom exercise rejected", func(t *testing.T) {
+		repo := &stubTrainingRepository{routine: routine}
+		svc := NewTrainingService(repo)
+
+		_, err := svc.LogRoutine(context.Background(), "user-1", &LogWorkoutRequest{
+			RoutineID: "routine-1",
+			Exercises: []EntryInput{{Name: "bench press", WeightKg: 80, Reps: 0}},
+		})
+		if err == nil || !strings.HasPrefix(err.Error(), "validation:") {
+			t.Fatalf("expected validation error, got: %v", err)
+		}
+		if repo.logWorkoutCalled {
+			t.Error("repository LogWorkout should not be called on validation failure")
+		}
+	})
+}
+
+func TestListWorkoutsByDateRangeService(t *testing.T) {
+	sameDate := func(a, b time.Time) bool {
+		ay, am, ad := a.Date()
+		by, bm, bd := b.Date()
+		return ay == by && am == bm && ad == bd
+	}
+
+	t.Run("empty params default to today", func(t *testing.T) {
+		repo := &stubTrainingRepository{}
+		svc := NewTrainingService(repo)
+		if _, err := svc.ListWorkoutsByDateRange(context.Background(), "user-1", "", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		now := time.Now()
+		if !sameDate(repo.rangeFrom, now) || !sameDate(repo.rangeTo, now) {
+			t.Errorf("expected both bounds to default to today, got from=%v to=%v", repo.rangeFrom, repo.rangeTo)
+		}
+	})
+
+	t.Run("explicit range passed through", func(t *testing.T) {
+		repo := &stubTrainingRepository{}
+		svc := NewTrainingService(repo)
+		if _, err := svc.ListWorkoutsByDateRange(context.Background(), "user-1", "2026-06-01", "2026-06-12"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := func(s string) time.Time {
+			d, _ := time.Parse("2006-01-02", s)
+			return d
+		}
+		if !sameDate(repo.rangeFrom, want("2026-06-01")) || !sameDate(repo.rangeTo, want("2026-06-12")) {
+			t.Errorf("unexpected range: from=%v to=%v", repo.rangeFrom, repo.rangeTo)
+		}
+	})
+
+	t.Run("bad date format", func(t *testing.T) {
+		svc := NewTrainingService(&stubTrainingRepository{})
+		_, err := svc.ListWorkoutsByDateRange(context.Background(), "user-1", "12-06-2026", "")
+		var parseErr *time.ParseError
+		if !errors.As(err, &parseErr) {
+			t.Fatalf("expected *time.ParseError, got %v", err)
+		}
+	})
+
+	t.Run("inverted range", func(t *testing.T) {
+		svc := NewTrainingService(&stubTrainingRepository{})
+		_, err := svc.ListWorkoutsByDateRange(context.Background(), "user-1", "2026-06-12", "2026-06-01")
+		if err == nil || !strings.HasPrefix(err.Error(), "validation:") {
+			t.Fatalf("expected validation error, got %v", err)
+		}
+	})
 }
 
 func TestListWorkoutsByDate(t *testing.T) {
@@ -376,6 +513,8 @@ func TestTrainingEndpointsRequireAuth(t *testing.T) {
 		{http.MethodGet, "/training/routine/view"},
 		{http.MethodPost, "/training/log"},
 		{http.MethodGet, "/training/view"},
+		{http.MethodGet, "/training/by-date"},
+		{http.MethodDelete, "/training/del"},
 	}
 
 	for _, rt := range routes {
@@ -537,6 +676,85 @@ func TestViewWorkoutsEndpoint(t *testing.T) {
 		rec := doJSON(t, mux, http.MethodGet, "/training/view", token, nil)
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("expected 500, got %d", rec.Code)
+		}
+	})
+}
+
+func TestViewWorkoutsByDateEndpoint(t *testing.T) {
+	t.Run("valid range", func(t *testing.T) {
+		mux, token := newTrainingServer(t, &stubTrainingRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/training/by-date?date_from=2026-06-01&date_to=2026-06-12", token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var workouts []Workout
+		if err := json.NewDecoder(rec.Body).Decode(&workouts); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(workouts) != 1 {
+			t.Errorf("expected 1 workout, got %d", len(workouts))
+		}
+	})
+
+	t.Run("no params defaults to today", func(t *testing.T) {
+		mux, token := newTrainingServer(t, &stubTrainingRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/training/by-date", token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("bad date", func(t *testing.T) {
+		mux, token := newTrainingServer(t, &stubTrainingRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/training/by-date?date_from=garbage", token, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("inverted range", func(t *testing.T) {
+		mux, token := newTrainingServer(t, &stubTrainingRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/training/by-date?date_from=2026-06-12&date_to=2026-06-01", token, nil)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestDeleteWorkoutEndpoint(t *testing.T) {
+	t.Run("valid request", func(t *testing.T) {
+		repo := &stubTrainingRepository{}
+		mux, token := newTrainingServer(t, repo)
+		rec := doJSON(t, mux, http.MethodDelete, "/training/del?id=workout-1", token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !repo.deleteCalled || repo.deletedID != "workout-1" {
+			t.Errorf("expected repo.DeleteWorkout called with workout-1, got called=%v id=%q", repo.deleteCalled, repo.deletedID)
+		}
+	})
+
+	t.Run("missing id", func(t *testing.T) {
+		mux, token := newTrainingServer(t, &stubTrainingRepository{})
+		rec := doJSON(t, mux, http.MethodDelete, "/training/del", token, nil)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		mux, token := newTrainingServer(t, &stubTrainingRepository{deleteMissing: true})
+		rec := doJSON(t, mux, http.MethodDelete, "/training/del?id=missing", token, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("repository failure", func(t *testing.T) {
+		mux, token := newTrainingServer(t, &stubTrainingRepository{err: errors.New("db down")})
+		rec := doJSON(t, mux, http.MethodDelete, "/training/del?id=workout-1", token, nil)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 }

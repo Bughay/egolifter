@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
+	"time"
 )
 
 // MealService defines the contract for meal business logic.
@@ -11,6 +13,8 @@ type MealService interface {
 	CreateMeal(ctx context.Context, userID string, req *CreateMealRequest) (*Meal, error)
 	GetMeal(ctx context.Context, userID, id string) (*Meal, error)
 	ListMeals(ctx context.Context, userID string) ([]Meal, error)
+	ListMealsByDateRange(ctx context.Context, userID, fromStr, toStr string) ([]Meal, error)
+	DeleteMeal(ctx context.Context, userID, id string) (bool, error)
 }
 
 type mealService struct {
@@ -35,6 +39,43 @@ func (s *mealService) GetMeal(ctx context.Context, userID, id string) (*Meal, er
 
 func (s *mealService) ListMeals(ctx context.Context, userID string) ([]Meal, error) {
 	return s.mealRepo.List(ctx, userID)
+}
+
+// ListMealsByDateRange lists meals created between the given YYYY-MM-DD dates
+// (inclusive); either bound defaults to today when empty.
+func (s *mealService) ListMealsByDateRange(ctx context.Context, userID, fromStr, toStr string) ([]Meal, error) {
+	parseOrToday := func(s string) (time.Time, error) {
+		if s == "" {
+			return time.Now(), nil
+		}
+		return time.Parse("2006-01-02", s)
+	}
+
+	from, err := parseOrToday(fromStr)
+	if err != nil {
+		return nil, err
+	}
+	to, err := parseOrToday(toStr)
+	if err != nil {
+		return nil, err
+	}
+
+	fy, fm, fd := from.Date()
+	ty, tm, td := to.Date()
+	if time.Date(fy, fm, fd, 0, 0, 0, 0, time.UTC).After(time.Date(ty, tm, td, 0, 0, 0, 0, time.UTC)) {
+		return nil, fmt.Errorf("validation: date_from must not be after date_to")
+	}
+
+	return s.mealRepo.ListByDateRange(ctx, userID, from, to)
+}
+
+// DeleteMeal removes the meal and all of its consumed foods; the returned
+// bool reports whether the meal existed.
+func (s *mealService) DeleteMeal(ctx context.Context, userID, id string) (bool, error) {
+	if strings.TrimSpace(id) == "" {
+		return false, fmt.Errorf("validation: meal id is required")
+	}
+	return s.mealRepo.Delete(ctx, userID, id)
 }
 
 // --- Food resolution logic (used by the repository when logging a meal) ---

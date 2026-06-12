@@ -48,6 +48,12 @@ type CreateRoutineRequest struct {
 	Entries []EntryInput `json:"entries"`
 }
 
+// LogWorkoutRequest logs a performed workout. When Exercises is non-empty the
+// given (possibly edited) exercises are recorded; otherwise the routine's
+// entries are snapshotted as-is. RoutineID may be omitted when Name and
+// Exercises are provided.
 type LogWorkoutRequest struct {
-	RoutineID string `json:"routine_id"`
+	RoutineID string       `json:"routine_id"`
+	Name      string       `json:"name"`
+	Exercises []EntryInput `json:"exercises"`
 }

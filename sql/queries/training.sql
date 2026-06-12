@@ -37,6 +37,24 @@ SELECT * FROM workout
 WHERE user_id = $1 AND created_at::date = $2::date
 ORDER BY created_at DESC;
 
+-- name: ListWorkoutsByDateRange :many
+SELECT * FROM workout
+WHERE user_id = sqlc.arg(user_id)
+  AND created_at::date BETWEEN sqlc.arg(date_from)::date AND sqlc.arg(date_to)::date
+ORDER BY created_at DESC;
+
+-- name: DeleteWorkout :execrows
+WITH deleted_exercises AS (
+    DELETE FROM exercise
+    WHERE workout_id = sqlc.arg(id)::uuid
+      AND EXISTS (
+          SELECT 1 FROM workout w
+          WHERE w.id = sqlc.arg(id)::uuid AND w.user_id = sqlc.arg(user_id)::uuid
+      )
+)
+DELETE FROM workout
+WHERE id = sqlc.arg(id)::uuid AND user_id = sqlc.arg(user_id)::uuid;
+
 -- name: ListExercisesByWorkout :many
 SELECT * FROM exercise
 WHERE workout_id = $1

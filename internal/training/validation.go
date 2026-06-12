@@ -37,10 +37,3 @@ func validateRoutineInput(name string, entries []EntryInput) error {
 	}
 	return nil
 }
-
-func validateLogRequest(routineID string) error {
-	if strings.TrimSpace(routineID) == "" {
-		return fmt.Errorf("validation: routine_id is required")
-	}
-	return nil
-}

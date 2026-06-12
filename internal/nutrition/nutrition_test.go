@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Bughay/egolifter/internal/auth"
 	"github.com/Bughay/egolifter/internal/lib"
@@ -23,6 +24,13 @@ type stubMealRepository struct {
 	err          error // when set, every method fails with it
 	meal         *Meal // returned by FindByID (nil = not found)
 	createCalled bool
+
+	rangeFrom time.Time // recorded by ListByDateRange
+	rangeTo   time.Time
+
+	deleteCalled  bool
+	deletedID     string // recorded by Delete
+	deleteMissing bool   // when set, Delete reports the meal as not found
 }
 
 func (s *stubMealRepository) Create(ctx context.Context, userID string, req *CreateMealRequest) (*Meal, error) {
@@ -41,6 +49,23 @@ func (s *stubMealRepository) FindByID(ctx context.Context, userID, id string) (*
 }
 
 func (s *stubMealRepository) List(ctx context.Context, userID string) ([]Meal, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return []Meal{{ID: "meal-1", UserID: userID, Name: "breakfast", Foods: []ConsumedFood{}}}, nil
+}
+
+func (s *stubMealRepository) Delete(ctx context.Context, userID, id string) (bool, error) {
+	s.deleteCalled = true
+	s.deletedID = id
+	if s.err != nil {
+		return false, s.err
+	}
+	return !s.deleteMissing, nil
+}
+
+func (s *stubMealRepository) ListByDateRange(ctx context.Context, userID string, from, to time.Time) ([]Meal, error) {
+	s.rangeFrom, s.rangeTo = from, to
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -677,6 +702,8 @@ func TestMealEndpointsRequireAuth(t *testing.T) {
 	}{
 		{http.MethodPost, "/meal/create"},
 		{http.MethodGet, "/meal/view"},
+		{http.MethodGet, "/meal/by-date"},
+		{http.MethodDelete, "/meal/del"},
 	}
 
 	for _, rt := range routes {
@@ -740,6 +767,145 @@ func TestViewMealEndpoint(t *testing.T) {
 		rec := doJSON(t, mux, http.MethodGet, "/meal/view?id=missing", token, nil)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestDeleteMealEndpoint(t *testing.T) {
+	t.Run("valid request", func(t *testing.T) {
+		repo := &stubMealRepository{}
+		mux, token := newMealServer(t, repo)
+		rec := doJSON(t, mux, http.MethodDelete, "/meal/del?id=meal-1", token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		if !repo.deleteCalled || repo.deletedID != "meal-1" {
+			t.Errorf("expected repo.Delete called with meal-1, got called=%v id=%q", repo.deleteCalled, repo.deletedID)
+		}
+	})
+
+	t.Run("missing id", func(t *testing.T) {
+		mux, token := newMealServer(t, &stubMealRepository{})
+		rec := doJSON(t, mux, http.MethodDelete, "/meal/del", token, nil)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		mux, token := newMealServer(t, &stubMealRepository{deleteMissing: true})
+		rec := doJSON(t, mux, http.MethodDelete, "/meal/del?id=missing", token, nil)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("repository failure", func(t *testing.T) {
+		mux, token := newMealServer(t, &stubMealRepository{err: errors.New("db down")})
+		rec := doJSON(t, mux, http.MethodDelete, "/meal/del?id=meal-1", token, nil)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestListMealsByDateRangeService(t *testing.T) {
+	sameDate := func(a, b time.Time) bool {
+		ay, am, ad := a.Date()
+		by, bm, bd := b.Date()
+		return ay == by && am == bm && ad == bd
+	}
+
+	t.Run("empty params default to today", func(t *testing.T) {
+		repo := &stubMealRepository{}
+		svc := NewMealService(repo)
+		if _, err := svc.ListMealsByDateRange(context.Background(), "user-1", "", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		now := time.Now()
+		if !sameDate(repo.rangeFrom, now) || !sameDate(repo.rangeTo, now) {
+			t.Errorf("expected both bounds to default to today, got from=%v to=%v", repo.rangeFrom, repo.rangeTo)
+		}
+	})
+
+	t.Run("explicit range passed through", func(t *testing.T) {
+		repo := &stubMealRepository{}
+		svc := NewMealService(repo)
+		if _, err := svc.ListMealsByDateRange(context.Background(), "user-1", "2026-06-01", "2026-06-12"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := func(s string) time.Time {
+			d, _ := time.Parse("2006-01-02", s)
+			return d
+		}
+		if !sameDate(repo.rangeFrom, want("2026-06-01")) || !sameDate(repo.rangeTo, want("2026-06-12")) {
+			t.Errorf("unexpected range: from=%v to=%v", repo.rangeFrom, repo.rangeTo)
+		}
+	})
+
+	t.Run("bad date format", func(t *testing.T) {
+		svc := NewMealService(&stubMealRepository{})
+		_, err := svc.ListMealsByDateRange(context.Background(), "user-1", "12-06-2026", "")
+		var parseErr *time.ParseError
+		if !errors.As(err, &parseErr) {
+			t.Fatalf("expected *time.ParseError, got %v", err)
+		}
+	})
+
+	t.Run("inverted range", func(t *testing.T) {
+		svc := NewMealService(&stubMealRepository{})
+		_, err := svc.ListMealsByDateRange(context.Background(), "user-1", "2026-06-12", "2026-06-01")
+		if err == nil || !strings.HasPrefix(err.Error(), "validation:") {
+			t.Fatalf("expected validation error, got %v", err)
+		}
+	})
+}
+
+func TestViewMealsByDateEndpoint(t *testing.T) {
+	t.Run("valid range", func(t *testing.T) {
+		mux, token := newMealServer(t, &stubMealRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/meal/by-date?date_from=2026-06-01&date_to=2026-06-12", token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var meals []Meal
+		if err := json.NewDecoder(rec.Body).Decode(&meals); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(meals) != 1 {
+			t.Errorf("expected 1 meal, got %d", len(meals))
+		}
+	})
+
+	t.Run("no params defaults to today", func(t *testing.T) {
+		mux, token := newMealServer(t, &stubMealRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/meal/by-date", token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("bad date", func(t *testing.T) {
+		mux, token := newMealServer(t, &stubMealRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/meal/by-date?date_from=garbage", token, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("inverted range", func(t *testing.T) {
+		mux, token := newMealServer(t, &stubMealRepository{})
+		rec := doJSON(t, mux, http.MethodGet, "/meal/by-date?date_from=2026-06-12&date_to=2026-06-01", token, nil)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("repository failure", func(t *testing.T) {
+		mux, token := newMealServer(t, &stubMealRepository{err: errors.New("db down")})
+		rec := doJSON(t, mux, http.MethodGet, "/meal/by-date", token, nil)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 }

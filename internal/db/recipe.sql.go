@@ -70,9 +70,17 @@ func (q *Queries) CreateRecipeIngredient(ctx context.Context, arg CreateRecipeIn
 	return i, err
 }
 
-const deleteRecipe = `-- name: DeleteRecipe :exec
+const deleteRecipe = `-- name: DeleteRecipe :execrows
+WITH deleted_ingredients AS (
+    DELETE FROM recipe_ingredients
+    WHERE recipe_id = $1::uuid
+      AND EXISTS (
+          SELECT 1 FROM recipe r
+          WHERE r.id = $1::uuid AND r.user_id = $2::uuid
+      )
+)
 DELETE FROM recipe
-WHERE id = $1 AND user_id = $2
+WHERE id = $1::uuid AND user_id = $2::uuid
 `
 
 type DeleteRecipeParams struct {
@@ -80,9 +88,12 @@ type DeleteRecipeParams struct {
 	UserID string `json:"user_id"`
 }
 
-func (q *Queries) DeleteRecipe(ctx context.Context, arg DeleteRecipeParams) error {
-	_, err := q.db.Exec(ctx, deleteRecipe, arg.ID, arg.UserID)
-	return err
+func (q *Queries) DeleteRecipe(ctx context.Context, arg DeleteRecipeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteRecipe, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteRecipeIngredientsByRecipe = `-- name: DeleteRecipeIngredientsByRecipe :exec
@@ -117,6 +128,71 @@ func (q *Queries) GetRecipeByID(ctx context.Context, arg GetRecipeByIDParams) (R
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getRecipeFoods = `-- name: GetRecipeFoods :many
+SELECT ri.id,
+       ri.food_id,
+       ri.weight_g,
+       ri.notes,
+       f.name AS food_name,
+       f.calories_100,
+       f.protein_100,
+       f.carbohydrates_100,
+       f.fat_100
+FROM recipe_ingredients ri
+JOIN food f ON f.id = ri.food_id
+JOIN recipe r ON r.id = ri.recipe_id
+WHERE ri.recipe_id = $1::uuid
+  AND r.user_id = $2::uuid
+ORDER BY ri.created_at
+`
+
+type GetRecipeFoodsParams struct {
+	RecipeID string `json:"recipe_id"`
+	UserID   string `json:"user_id"`
+}
+
+type GetRecipeFoodsRow struct {
+	ID               string      `json:"id"`
+	FoodID           string      `json:"food_id"`
+	WeightG          float64     `json:"weight_g"`
+	Notes            pgtype.Text `json:"notes"`
+	FoodName         string      `json:"food_name"`
+	Calories100      float64     `json:"calories_100"`
+	Protein100       float64     `json:"protein_100"`
+	Carbohydrates100 float64     `json:"carbohydrates_100"`
+	Fat100           float64     `json:"fat_100"`
+}
+
+func (q *Queries) GetRecipeFoods(ctx context.Context, arg GetRecipeFoodsParams) ([]GetRecipeFoodsRow, error) {
+	rows, err := q.db.Query(ctx, getRecipeFoods, arg.RecipeID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRecipeFoodsRow
+	for rows.Next() {
+		var i GetRecipeFoodsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FoodID,
+			&i.WeightG,
+			&i.Notes,
+			&i.FoodName,
+			&i.Calories100,
+			&i.Protein100,
+			&i.Carbohydrates100,
+			&i.Fat100,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listRecipeIngredients = `-- name: ListRecipeIngredients :many
